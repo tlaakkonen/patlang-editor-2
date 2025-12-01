@@ -121,7 +121,7 @@ export default function LoadDialog({ open, onClose, onImport }) {
             DialogContent padding-top to zero. */}
         <Box sx={{ mt: 1.0 }}>
           <Stack direction="row" spacing={1} sx={{ mb: 1 }} alignItems="center">
-            <Button onClick={handleChooseFile}>Choose file...</Button>
+            <Button onClick={handleChooseFile} variant='outlined'>Choose file...</Button>
             <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
             <FormControl size="small" sx={{ minWidth: 180, mt: 1 }}>
               <InputLabel id="example-select-label">Example</InputLabel>

@@ -1,7 +1,9 @@
 import manipulation from './example-manipulation.json'
+import classification from './example-classification.json'
 
 const examples = [
-  { key: 'manipulation', label: 'Manipulation task', data: manipulation },
+  { key: 'classifier', label: 'Classification', data: classification },
+  { key: 'manipulation', label: 'Manipulation', data: manipulation },
 ]
 
 export default examples

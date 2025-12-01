@@ -37,6 +37,16 @@ Core app components
 - `src/components/Layout/Layout.jsx` — page layout shell (header + sidebar + main)
 - `src/components/Layout/TopMenu.jsx` — top menu bar; it now delegates dialog UIs to small focused components (Save/Load/Clear/Generate)
 - `src/components/Layout/GenerateCodeDialog.jsx` — dialog for generating code from diagrams/equations (includes validation UI and a Generate action)
+  - Notes: the Generate Code dialog now keeps an in-memory `wizardState` that includes per-wire configuration: `wireDims`, `wireSelects` and `wireOneHot` (boolean flags indicating if a wire should be treated as one-hot). The dialog reconciles these mappings when the available wire types change (preserves existing values, defaults `wireOneHot` to `false` for new wires) and passes them into the step components.
+
+  - `src/components/Layout/GenerateSteps/` — a small folder of step components used by `GenerateCodeDialog`. Each step is a focused, mostly presentational component; the dialog owns the in-memory `wizardState` and passes controlled props + callbacks into the steps.
+    - `ValidationStep.jsx` — computes validation errors for the current diagrams/equations and reports them back via `onValidationChange(errors)`. Shown as the first step to prevent advancing when there are blocking issues.
+    - `DimensionsStep.jsx` — controlled UI for assigning per-wire dimensions and a one-hot flag. Contract:
+      - Props: `wires`, `value` (wireDims map), `selects` (wireSelects map), `oneHot` (wireOneHot map), `onChange(nextWireDims, nextWireSelects, nextWireOneHot)`, `onValidityChange(valid)`.
+      - Behavior: fully controlled (no local state). `onChange` is called whenever the dimension or one-hot toggles change. Validation (numeric > 0) is computed from `value` and reported via `onValidityChange`.
+    - `ArchitectureStep.jsx` — UI to configure learner-specific architectures and settings. Receives `learners`, `value` (learnerConfigs), `onChange` and `onValidityChange` and is responsible for validating learner configuration.
+  - `EquationsStep.jsx` — interactive UI for configuring loss functions and training options per equation. It lists equations from the palette and for each lets you set a numeric weight, choose which learner nodes should be trained, and pick a per-output-wire loss (L2, SSIM, BCE, CE) with sensible defaults (one-hot wires default to CE). Used on the final step to configure loss/learner settings before generating.
+    - `WizardStepper.jsx` — bottom-aligned stepper/navigation used by the dialog. Props: `steps`, `activeStep`, `onBack`, `onNext`, `onClose`, `canAdvance`.
 - `src/components/Layout/SaveDialog.jsx` — export JSON dialog (generates payload and supports copy/download)
 - `src/components/Layout/LoadDialog.jsx` — import JSON dialog (file chooser, example loader, parsing/validation, calls back to apply imported data)
 - `src/components/Layout/ClearDialog.jsx` — clear-confirmation dialog (performs localStorage clear and reload by default)

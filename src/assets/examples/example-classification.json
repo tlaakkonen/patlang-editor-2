@@ -1,0 +1,290 @@
+{
+  "sections": [
+    {
+      "title": "Diagrams",
+      "key": "diagrams",
+      "items": [
+        {
+          "type": "diagrams-diagram-1764336776627",
+          "label": "Classify LHS",
+          "nodes": [
+            {
+              "id": "n_22",
+              "type": "custom",
+              "position": {
+                "x": 313.75,
+                "y": 303
+              },
+              "data": {
+                "type": "boxes-box-1764336563409"
+              },
+              "measured": {
+                "width": 58,
+                "height": 88
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_23",
+              "type": "custom",
+              "position": {
+                "x": 405.5,
+                "y": 302
+              },
+              "data": {
+                "type": "boxes-box-1764336535357"
+              },
+              "measured": {
+                "width": 50,
+                "height": 64
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_24",
+              "type": "custom",
+              "position": {
+                "x": 492,
+                "y": 303
+              },
+              "data": {
+                "type": "boxes-box-1764336585389"
+              },
+              "measured": {
+                "width": 116,
+                "height": 64
+              },
+              "selected": false,
+              "dragging": false
+            }
+          ],
+          "edges": [
+            {
+              "source": "n_23",
+              "sourceHandle": "out-0",
+              "target": "n_24",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#ffe871",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_23out-0-n_24in-0"
+            },
+            {
+              "source": "n_22",
+              "sourceHandle": "out-0",
+              "target": "n_23",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#79afff",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_22out-0-n_23in-0"
+            }
+          ],
+          "opened": true
+        },
+        {
+          "type": "diagrams-diagram-1764503965809",
+          "label": "Classify RHS",
+          "nodes": [
+            {
+              "id": "n_10",
+              "type": "custom",
+              "position": {
+                "x": 348.80082592121977,
+                "y": 296.2514294790343
+              },
+              "data": {
+                "type": "boxes-box-1764336563409"
+              },
+              "measured": {
+                "width": 58,
+                "height": 88
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_11",
+              "type": "custom",
+              "position": {
+                "x": 523.1972681067343,
+                "y": 318.9229669631512
+              },
+              "data": {
+                "type": "boxes-box-1764336585389"
+              },
+              "measured": {
+                "width": 116,
+                "height": 64
+              },
+              "selected": false,
+              "dragging": false
+            }
+          ],
+          "edges": [
+            {
+              "source": "n_10",
+              "sourceHandle": "out-1",
+              "target": "n_11",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#ffe871",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_10out-1-n_11in-0"
+            }
+          ],
+          "opened": false
+        }
+      ]
+    },
+    {
+      "title": "Wires",
+      "key": "wires",
+      "items": [
+        {
+          "type": "wires-wire-1764336486940",
+          "label": "Data",
+          "color": "#79afff"
+        },
+        {
+          "type": "wires-wire-1764336506886",
+          "label": "Value",
+          "color": "#ffe871"
+        }
+      ]
+    },
+    {
+      "title": "Boxes",
+      "key": "boxes",
+      "items": [
+        {
+          "type": "boxes-box-1764336535357",
+          "label": "Get",
+          "color": "#71ff99",
+          "kind": "learner",
+          "inputs": [
+            "wires-wire-1764336486940"
+          ],
+          "outputs": [
+            "wires-wire-1764336506886"
+          ]
+        },
+        {
+          "type": "boxes-box-1764336563409",
+          "label": "Data",
+          "color": "#c4c4c4",
+          "kind": "data",
+          "inputs": [],
+          "outputs": [
+            "wires-wire-1764336486940",
+            "wires-wire-1764336506886"
+          ]
+        },
+        {
+          "type": "boxes-box-1764336585389",
+          "label": "Output Value",
+          "color": "#dddddd",
+          "kind": "output",
+          "inputs": [
+            "wires-wire-1764336506886"
+          ],
+          "outputs": []
+        }
+      ]
+    },
+    {
+      "title": "Equations",
+      "key": "equations",
+      "items": [
+        {
+          "type": "equations-equation-1764336896935",
+          "label": "Classify",
+          "lhs-type": "diagrams-diagram-1764336776627",
+          "rhs-type": "diagrams-diagram-1764503965809"
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "n_22",
+      "type": "custom",
+      "position": {
+        "x": 313.75,
+        "y": 303
+      },
+      "data": {
+        "type": "boxes-box-1764336563409"
+      },
+      "measured": {
+        "width": 58,
+        "height": 88
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "n_23",
+      "type": "custom",
+      "position": {
+        "x": 405.5,
+        "y": 302
+      },
+      "data": {
+        "type": "boxes-box-1764336535357"
+      },
+      "measured": {
+        "width": 50,
+        "height": 64
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "n_24",
+      "type": "custom",
+      "position": {
+        "x": 492,
+        "y": 303
+      },
+      "data": {
+        "type": "boxes-box-1764336585389"
+      },
+      "measured": {
+        "width": 116,
+        "height": 64
+      },
+      "selected": false,
+      "dragging": false
+    }
+  ],
+  "edges": [
+    {
+      "source": "n_23",
+      "sourceHandle": "out-0",
+      "target": "n_24",
+      "targetHandle": "in-0",
+      "style": {
+        "stroke": "#ffe871",
+        "strokeWidth": 3
+      },
+      "id": "xy-edge__n_23out-0-n_24in-0"
+    },
+    {
+      "source": "n_22",
+      "sourceHandle": "out-0",
+      "target": "n_23",
+      "targetHandle": "in-0",
+      "style": {
+        "stroke": "#79afff",
+        "strokeWidth": 3
+      },
+      "id": "xy-edge__n_22out-0-n_23in-0"
+    }
+  ]
+}

@@ -2,115 +2,162 @@ import React from 'react'
 import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
-import DialogActions from '@mui/material/DialogActions'
 import IconButton from '@mui/material/IconButton'
 import Button from '@mui/material/Button'
 import CloseIcon from '@mui/icons-material/Close'
-import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import Stepper from '@mui/material/Stepper'
-import Step from '@mui/material/Step'
-import StepLabel from '@mui/material/StepLabel'
 import Divider from '@mui/material/Divider'
+import ValidationStep from './GenerateSteps/ValidationStep'
+import DimensionsStep from './GenerateSteps/DimensionsStep'
+import ArchitectureStep from './GenerateSteps/ArchitectureStep'
+import EquationsStep from './GenerateSteps/EquationsStep'
+import FinishStep from './GenerateSteps/FinishStep'
+import WizardStepper from './GenerateSteps/WizardStepper'
+// step components contain their own UI imports
 import { usePalette } from '../../state/PaletteContext'
-import { analyzeOutputNodes, collectAllNodeInstances, nodesHaveMissingInputConnections } from '../../utils/validation'
+// validation logic moved into ValidationStep; helpers are imported there
 
 export default function GenerateCodeDialog({ open, onClose }) {
   const { sections, findItemByType } = usePalette()
   const [validationErrors, setValidationErrors] = React.useState([])
   const [activeStep, setActiveStep] = React.useState(0)
+  // per-step validity reported from child step components
+  const [stepValidity, setStepValidity] = React.useState({})
 
-  const steps = ['Validation', 'Step 2', 'Step 3', 'Step 4']
+  const wires = React.useMemo(() => (sections || []).find((s) => s.key === 'wires')?.items || [], [sections])
+  const equations = React.useMemo(() => (sections || []).find((s) => s.key === 'equations')?.items || [], [sections])
+  const learners = React.useMemo(() => {
+    const boxes = (sections || []).find((s) => s.key === 'boxes')?.items || []
+    return boxes.filter((b) => b?.kind === 'learner')
+  }, [sections])
 
+  // Controlled wizard state (no localStorage persistence)
+  const DEFAULT_WIZARD = { 
+    activeStep: 0,
+    wireDims: {},
+    wireSelects: {},
+    wireOneHot: {},
+    learnerConfigs: {},
+    outputLosses: {},
+    outputLearners: {},
+    outputWeights: {},
+  };
+
+  const [wizardState, setWizardState] = React.useState(DEFAULT_WIZARD)
+
+  // reconcile wizardState when wire types or learners change between open/close
   React.useEffect(() => {
-    if (!open) return
-
-    const errs = []
-
-    const diagrams = (sections || []).find((s) => s.key === 'diagrams')?.items || []
-    const equations = (sections || []).find((s) => s.key === 'equations')?.items || []
-
-  // use shared helper for output-node analysis
-
-    // (Replaced by checking all node instances below)
-
-    // For each equation, run the same validation as AddEquationDialog
-    for (const eq of equations) {
-      const lhsType = eq?.['lhs-type']
-      const rhsType = eq?.['rhs-type']
-      if (!lhsType || !rhsType) {
-        errs.push(`Equation "${eq?.label || eq?.type}" missing LHS or RHS diagram`)
-        continue
-      }
-
-      const lhs = diagrams.find((d) => d.type === lhsType)
-      const rhs = diagrams.find((d) => d.type === rhsType)
-      if (!lhs) {
-        errs.push(`Equation "${eq?.label || eq?.type}": LHS diagram not found or has no saved state.`)
-        continue
-      }
-      if (!rhs) {
-        errs.push(`Equation "${eq?.label || eq?.type}": RHS diagram not found or has no saved state.`)
-        continue
-      }
-
-      const lhsNodes = lhs.nodes || []
-      const rhsNodes = rhs.nodes || []
-      const lhsEdges = lhs.edges || []
-      const rhsEdges = rhs.edges || []
-
-      const lhsAnalysis = analyzeOutputNodes(lhsNodes, findItemByType)
-      const rhsAnalysis = analyzeOutputNodes(rhsNodes, findItemByType)
-
-      // Rule 1: at most one of each output node type in each diagram
-      const lhsHasDuplicates = Object.values(lhsAnalysis.outputTypeCounts).some((c) => c > 1)
-      const rhsHasDuplicates = Object.values(rhsAnalysis.outputTypeCounts).some((c) => c > 1)
-      if (lhsHasDuplicates || rhsHasDuplicates) {
-        errs.push(`Equation "${eq?.label || eq?.type}": diagrams contain more than one of the same output box`)
-      }
-
-      // Rule 2: set of output node types must be identical
-      const lhsSet = lhsAnalysis.outputTypes
-      const rhsSet = rhsAnalysis.outputTypes
-      const onlyInLhs = [...lhsSet].filter((x) => !rhsSet.has(x))
-      const onlyInRhs = [...rhsSet].filter((x) => !lhsSet.has(x))
-      if (onlyInLhs.length || onlyInRhs.length) {
-        errs.push(`Equation "${eq?.label || eq?.type}": diagrams don't contain the same outputs`)
-      }
-
-      // Rule 3: for each node instance (not only outputs), every input handle index must have an edge
-      const lhsAllInstances = collectAllNodeInstances(lhsNodes, findItemByType)
-      const rhsAllInstances = collectAllNodeInstances(rhsNodes, findItemByType)
-
-      const lhsMissing = nodesHaveMissingInputConnections(lhsAllInstances, lhsEdges)
-      const rhsMissing = nodesHaveMissingInputConnections(rhsAllInstances, rhsEdges)
-      if (lhsMissing || rhsMissing) errs.push(`Equation "${eq?.label || eq?.type}": a node is missing a connection to its input`)
+    // build next-wire dims/selects preserving existing values where possible
+    const nextWireDims = {}
+    const nextWireSelects = {}
+    const nextWireOneHot = {}
+    for (const w of wires) {
+      const existing = wizardState.wireDims?.[w.type]
+      nextWireDims[w.type] = existing !== undefined ? existing : '1'
+      const sel = wizardState.wireSelects?.[w.type]
+      if (sel !== undefined) nextWireSelects[w.type] = sel
+      else nextWireSelects[w.type] = (['1','2','4','8','16','32','64','128','256','512'].includes(String(nextWireDims[w.type])) ? String(nextWireDims[w.type]) : (nextWireDims[w.type] === '' ? '' : 'custom'))
+      const existingOne = wizardState.wireOneHot?.[w.type]
+      nextWireOneHot[w.type] = existingOne !== undefined ? existingOne : false
     }
 
-    // (Combined into Rule 3 above) — no separate per-diagram check needed
+    // learner configs: keep existing keys, add defaults for new learners
+    const nextLearnerConfigs = { ...(wizardState.learnerConfigs || {}) }
+    for (const b of learners) {
+      if (!nextLearnerConfigs[b.type]) nextLearnerConfigs[b.type] = { arch: 'Linear' }
+    }
 
-    setValidationErrors(errs)
-  }, [open, sections, findItemByType])
+    // prune removed keys
+    for (const k of Object.keys(wizardState.wireDims || {})) {
+      if (!wires.find((w) => w.type === k)) {
+        delete nextWireDims[k]
+        delete nextWireSelects[k]
+        delete nextWireOneHot[k]
+      }
+    }
+    for (const k of Object.keys(wizardState.learnerConfigs || {})) {
+      if (!learners.find((b) => b.type === k)) delete nextLearnerConfigs[k]
+    }
+
+    // if changed, update
+    const changed = JSON.stringify(nextWireDims) !== JSON.stringify(wizardState.wireDims) ||
+      JSON.stringify(nextWireSelects) !== JSON.stringify(wizardState.wireSelects) ||
+      JSON.stringify(nextWireOneHot) !== JSON.stringify(wizardState.wireOneHot) ||
+      JSON.stringify(nextLearnerConfigs) !== JSON.stringify(wizardState.learnerConfigs)
+    if (changed) {
+      setWizardState((s) => ({ ...s, wireDims: nextWireDims, wireSelects: nextWireSelects, wireOneHot: nextWireOneHot, learnerConfigs: nextLearnerConfigs }))
+    }
+  }, [wires, learners, wizardState])
+
+  // no localStorage persistence for wizardState
+
+  // stepValidity will be set by child step components via onValidityChange
+
+  // Ensure the wizard visible step resets to the first step when the
+  // dialog is opened. Also sync this into `wizardState.activeStep` so
+  // the two remain consistent when persisted in-memory while the
+  // dialog stays mounted.
+  React.useEffect(() => {
+    if (open) {
+      setActiveStep(0)
+      setWizardState((w) => ({ ...w, activeStep: 0 }))
+    }
+  }, [open])
+
+  // Architecture-specific state moved into ArchitectureStep
+
+  const steps = ['Validation', 'Dimensions', 'Architecture', 'Equations', 'Finish']
+
+  // stable callbacks passed to child steps to avoid re-creating functions
+  // on every render (which caused child effects to rerun and produced
+  // update depth / setState-in-render errors).
+  const dimsOnChange = React.useCallback((nextWireDims, nextWireSelects, nextWireOneHot) => {
+    setWizardState((s) => ({ ...s, wireDims: nextWireDims, wireSelects: nextWireSelects, wireOneHot: nextWireOneHot || {} }))
+  }, [])
+  const dimsOnValidity = React.useCallback((valid) => setStepValidity((s) => ({ ...s, 1: valid })), [setStepValidity])
+  const cfgOnChange = React.useCallback((nextLearnerConfigs) => {
+    setWizardState((s) => ({ ...s, learnerConfigs: nextLearnerConfigs }))
+  }, [])
+  const cfgOnValidity = React.useCallback((valid) => setStepValidity((s) => ({ ...s, 2: valid })), [setStepValidity])
+  const eqOnChange = React.useCallback((nextOutputLosses) => setWizardState((s) => ({ ...s, outputLosses: nextOutputLosses || {} })), [])
+  const eqLearnersOnChange = React.useCallback((nextOutputLearners) => setWizardState((s) => ({ ...s, outputLearners: nextOutputLearners || {} })), [])
+  const eqWeightsOnChange = React.useCallback((nextOutputWeights) => setWizardState((s) => ({ ...s, outputWeights: nextOutputWeights || {} })), [])
+
+  // Validation for equations/diagrams is now handled by the ValidationStep
+  // component which computes errors and reports them back via
+  // `onValidationChange` so we only keep the `validationErrors` state here.
 
   const hasErrors = validationErrors.length > 0
-  // Generic per-step advancement control. Update this to add custom checks
-  // for other steps as the wizard grows.
+  // Generic per-step advancement control. Steps report their own validity
+  // via `stepValidity` using onValidityChange callbacks.
   const canAdvance = (step) => {
+    // require at least one equation in the palette before allowing any advancement
     if (step === 0) return !hasErrors
+    if (step === 1) return stepValidity[1] !== false
+    if (step === 2) return stepValidity[2] !== false
+  if (step === 3) return equations && equations.length > 0
+  if (step === 4) return true
     return true
   }
 
   const handleNext = () => {
     // double-check before advancing
     if (!canAdvance(activeStep)) return
-    setActiveStep((s) => Math.min(s + 1, steps.length - 1))
+    setActiveStep((s) => {
+      const next = Math.min(s + 1, steps.length - 1)
+      setWizardState((w) => ({ ...w, activeStep: next }))
+      return next
+    })
   }
+
+  // Steps encapsulate their own change handlers; parent receives onChange
+  // and onValidityChange callbacks.
 
   const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0))
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+  <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" keepMounted>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
           <Box component="span" sx={{ fontWeight: 500 }}>Generate Code</Box>
@@ -129,69 +176,65 @@ export default function GenerateCodeDialog({ open, onClose }) {
         <Box sx={{ mt: 1 }}>
           <Box sx={{ mt: 2 }}>
             {activeStep === 0 && (
-              <Box>
-                {hasErrors ? (
-                  <Alert severity="error">
-                    <Box sx={{ mb: 1 }}>
-                      <Typography variant="body2">Validation errors found — please fix these before generating code:</Typography>
-                    </Box>
-                    <ul style={{ margin: 0, paddingLeft: 16 }}>
-                      {validationErrors.map((err, i) => (
-                        <li key={i}>{err}</li>
-                      ))}
-                    </ul>
-                  </Alert>
-                ) : (
-                  <Alert severity="success">All equation and diagrams referenced by equations look valid.</Alert>
-                )}
-              </Box>
+              <ValidationStep
+                sections={sections}
+                findItemByType={findItemByType}
+                open={open}
+                onValidationChange={(errs) => setValidationErrors(errs)}
+              />
             )}
 
             {activeStep === 1 && (
-              <Box sx={{ p: 2 }}>
-                <Typography variant="body2">Step 2 — placeholder</Typography>
-              </Box>
+              <DimensionsStep
+                wires={wires}
+                open={open}
+                value={wizardState.wireDims}
+                selects={wizardState.wireSelects}
+                oneHot={wizardState.wireOneHot}
+                onChange={dimsOnChange}
+                onValidityChange={dimsOnValidity}
+              />
             )}
 
             {activeStep === 2 && (
-              <Box sx={{ p: 2 }}>
-                <Typography variant="body2">Step 3 — placeholder</Typography>
-              </Box>
+              <ArchitectureStep
+                learners={learners}
+                open={open}
+                value={wizardState.learnerConfigs}
+                onChange={cfgOnChange}
+                onValidityChange={cfgOnValidity}
+                validationErrors={validationErrors}
+              />
             )}
 
             {activeStep === 3 && (
-              <Box sx={{ p: 2 }}>
-                <Typography variant="body2">Step 4 — placeholder</Typography>
-              </Box>
+              <EquationsStep
+                value={wizardState.outputLosses || {}}
+                onChange={eqOnChange}
+                oneHot={wizardState.wireOneHot || {}}
+                learnersValue={wizardState.outputLearners || {}}
+                learnersOnChange={eqLearnersOnChange}
+                weightsValue={wizardState.outputWeights || {}}
+                weightsOnChange={eqWeightsOnChange}
+              />
+            )}
+            {activeStep === 4 && (
+              <FinishStep
+                wizardState={wizardState}
+              />
             )}
           </Box>
         </Box>
-  </DialogContent>
-  <Divider sx={{ mt: 1 }} />
-  <DialogActions sx={{ alignItems: 'center' }}>
-        <Button onClick={onClose}>Cancel</Button>
-        <Box sx={{ flex: 1 }} />
-
-        <Box sx={{ display: 'flex', alignItems: 'center', ml: 2, mr: 2 }}>
-          <Stepper activeStep={activeStep} sx={{ minWidth: 220 }}>
-            {steps.map((label) => (
-              <Step key={label}>
-                <StepLabel>{label}</StepLabel>
-              </Step>
-            ))}
-          </Stepper>
-        </Box>
-
-        <Box sx={{ flex: 1 }} />
-        <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
-        <Button
-          onClick={handleNext}
-          variant="contained"
-          disabled={activeStep === steps.length - 1 || !canAdvance(activeStep)}
-        >
-          Next
-        </Button>
-      </DialogActions>
+      </DialogContent>
+      <Divider sx={{ mt: 1 }} />
+      <WizardStepper
+        steps={steps}
+        activeStep={activeStep}
+        onBack={handleBack}
+        onNext={handleNext}
+        onClose={onClose}
+        canAdvance={canAdvance}
+      />
     </Dialog>
   )
 }
