@@ -18,8 +18,8 @@ export default function FinishStep({ wizardState, sections }) {
     // Try Web Share API for files on mobile platforms (iOS/Android).
     // Avoid using Web Share on desktop even if the API exists there.
     try {
-    // include iPads which sometimes report a desktop UA but are iOS devices
-    if ((isMobile || isIOS) && navigator.share && navigator.canShare && typeof File !== 'undefined') {
+      // include iPads which sometimes report a desktop UA but are iOS devices
+      if ((isMobile || isIOS) && navigator.share && navigator.canShare && typeof File !== 'undefined') {
         // Some browsers may throw when constructing File, guard with try/catch
         try {
           const file = new File([blob], fileName, { type: blob.type })
@@ -39,9 +39,13 @@ export default function FinishStep({ wizardState, sections }) {
               }
             }
           }
-        } catch {}
+        } catch {
+          // ignore errors constructing File or testing navigator.canShare in restrictive browsers
+        }
       }
-    } catch {}
+    } catch {
+      // ignore Web Share detection errors and fall back to downloading the blob
+    }
 
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

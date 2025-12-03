@@ -272,6 +272,7 @@ export default function TrainLiveDialog({ open, onClose }) {
                 onChange={cfgOnChange}
                 onValidityChange={cfgOnValidity}
                 validationErrors={validationErrors}
+                showTransformer={false}
               />
             )}
 
@@ -301,7 +302,6 @@ export default function TrainLiveDialog({ open, onClose }) {
         activeStep={activeStep}
         onBack={handleBack}
         onNext={handleNext}
-        onClose={onClose}
         canAdvance={canAdvance}
       />
     </Dialog>

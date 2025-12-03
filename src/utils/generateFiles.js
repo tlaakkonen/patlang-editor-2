@@ -2,6 +2,24 @@ function getSection(sections, key) {
     return sections.find((section) => section.key === key);
 }
 
+const POSENC_DEF = `import torch
+import math
+
+class PositionalEncoding(torch.nn.Module):
+    def __init__(self, d_model: int, max_len: int = 5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)   # even dims
+        pe[:, 1::2] = torch.cos(position * div_term)   # odd dims
+        pe = pe.unsqueeze(0)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pe = self.pe[:, :x.shape[-2], :].type_as(x)  # (1, seq_len, d_model), same dtype & device
+        return x + pe`
+
 class CodeGenerator {
     constructor(sections, wizardState) {
         this.wires = getSection(sections, 'wires').items
@@ -40,10 +58,11 @@ class CodeGenerator {
     }
 
     addLine(line, marker) {
+        let indent = marker ? marker[0] : this.indent
+        let nline = line.split("\n").map((subline) => ' '.repeat(indent) + subline).join("\n") + '\n'
         if (marker === undefined) {
-            this.blocks[this.blocks.length - 1] += ' '.repeat(this.indent) + line + '\n'
+            this.blocks[this.blocks.length - 1] += nline
         } else {
-            let nline = ' '.repeat(marker[0]) + line + '\n'
             this.blocks[marker[2]] = this.blocks[marker[2]].slice(0, marker[1]) + nline + this.blocks[marker[2]].slice(marker[1])
         }
     }
@@ -127,7 +146,11 @@ class CodeGenerator {
     }
 
     preamble() {
-        this.addLine('import torch')
+        if (!Object.entries(this.wizardState.learnerConfigs).every(([_, value]) => value.arch !== 'Transformer')) {
+            this.addLine(POSENC_DEF)
+        } else {
+            this.addLine('import torch')
+        }
     }
 
     generateInstances(allInputs) {
@@ -195,6 +218,23 @@ class CodeGenerator {
                     this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${outputDim})`)
                     this.endBlock()
                     this.addLine(`)`)   
+                } else if (this.wizardState.learnerConfigs[box.type].arch === 'Transformer') {
+                    let transformer = this.wizardState.learnerConfigs[box.type].transformer
+                    this.addLine(`layer = torch.nn.TransformerEncoderLayer(
+    d_model=${transformer.dModel},
+    nhead=${transformer.numHeads},
+    dim_feedforward=${transformer.dff},
+    dropout=${transformer.dropout},
+    batch_first=True
+)`)
+                    this.addLine(`self.model = torch.nn.Sequential(`)
+                    this.beginBlock()
+                    this.addLine(`torch.nn.Linear(${inputDim}, ${transformer.dModel}),`)
+                    this.addLine(`PositionalEncoding(${transformer.dModel}),`)
+                    this.addLine(`torch.nn.TransformerEncoder(layer, num_layers=${transformer.numLayers}),`)
+                    this.addLine(`torch.nn.Linear(${transformer.dModel}, ${outputDim})`)
+                    this.endBlock()
+                    this.addLine(')')
                 }
             }
             this.endBlock()
@@ -203,7 +243,7 @@ class CodeGenerator {
             this.addLine(`def forward(self, ${box.inputs.map((_, i) => `input${i}`).join(", ")}):`)
             this.beginBlock()
             if (outputDim === 0) {
-                this.addLine("return ()")
+                this.addLine("return")
             } else if (inputDim === 0) {
                 this.addLine("return self.model")
             } else {

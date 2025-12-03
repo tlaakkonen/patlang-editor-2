@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React from 'react'
 import { ThemeProvider as MUIThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
@@ -33,7 +34,9 @@ export function ThemeProvider({ children }) {
     try {
       const v = localStorage.getItem('patlang:darkMode')
       if (v !== null) return v === '1'
-    } catch (e) {}
+    } catch {
+      // intentionally ignore localStorage errors (e.g. SSR or blocked storage)
+    }
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
   })
 
@@ -46,7 +49,9 @@ export function ThemeProvider({ children }) {
         document.documentElement.classList.remove('dark')
         localStorage.setItem('patlang:darkMode', '0')
       }
-    } catch (e) {}
+    } catch {
+      // ignore localStorage/document errors in restrictive environments
+    }
   }, [darkMode])
 
   const theme = React.useMemo(() => buildTheme(darkMode ? 'dark' : 'light'), [darkMode])

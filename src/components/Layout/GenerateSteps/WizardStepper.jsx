@@ -6,7 +6,7 @@ import Stepper from '@mui/material/Stepper'
 import Step from '@mui/material/Step'
 import StepLabel from '@mui/material/StepLabel'
 
-export default function WizardStepper({ steps, activeStep, onBack, onNext, onClose, canAdvance }) {
+export default function WizardStepper({ steps, activeStep, onBack, onNext, canAdvance }) {
   return (
     <>
       <DialogActions sx={{ alignItems: 'center' }}>

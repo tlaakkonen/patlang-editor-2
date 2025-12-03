@@ -274,6 +274,7 @@ export default function GenerateCodeDialog({ open, onClose }) {
                 onChange={cfgOnChange}
                 onValidityChange={cfgOnValidity}
                 validationErrors={validationErrors}
+                showTransformer={true}
               />
             )}
 
@@ -303,7 +304,6 @@ export default function GenerateCodeDialog({ open, onClose }) {
         activeStep={activeStep}
         onBack={handleBack}
         onNext={handleNext}
-        onClose={onClose}
         canAdvance={canAdvance}
       />
     </Dialog>

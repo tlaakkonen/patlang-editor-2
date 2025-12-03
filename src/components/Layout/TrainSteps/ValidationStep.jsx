@@ -73,6 +73,22 @@ export default function ValidationStep({ sections = [], findItemByType, open, on
         errs.push(`Equation "${eq?.label || eq?.type}": diagrams contain more than one of the same input box`)
       }
 
+      // Ensure diagrams referenced by an equation do not contain boxes with kind === 'fixed'
+      const diagramContainsFixedKind = (nodesArr = []) => {
+        for (const node of nodesArr || []) {
+          const t = node.data?.type
+          const box = findItemByType ? findItemByType('boxes', t) : null
+          if (box?.kind === 'fixed') return true
+        }
+        return false
+      }
+
+      const lhsHasFixed = diagramContainsFixedKind(lhsNodes)
+      const rhsHasFixed = diagramContainsFixedKind(rhsNodes)
+      if (lhsHasFixed || rhsHasFixed) {
+        errs.push(`Equation "${eq?.label || eq?.type}": diagrams referenced by an equation must not contain fixed-function boxes`)
+      }
+
       const lhsSet = lhsAnalysis.outputTypes
       const rhsSet = rhsAnalysis.outputTypes
       // ensure each diagram contains at least one output type

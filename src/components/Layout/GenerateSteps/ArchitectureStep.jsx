@@ -13,7 +13,7 @@ import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
 import TextField from '@mui/material/TextField'
 
-export default function ArchitectureStep({ learners, value = {}, onChange, onValidityChange, validationErrors }) {
+export default function ArchitectureStep({ learners, value = {}, onChange, onValidityChange, validationErrors, showTransformer = true }) {
   // Fully controlled: render from `value` (learnerConfigs) and call
   // `onChange(updated)` when user edits fields. Compute validation
   // errors from `value` and report aggregate validity via
@@ -31,6 +31,26 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
           hiddenLayers: (!Number.isFinite(hlNum) || hlNum < 1) ? 'Must be integer >= 1' : '',
           hiddenUnits: (!Number.isFinite(huNum) || huNum < 1) ? 'Must be integer >= 1' : '',
         }
+      } else if (cfg.arch === 'Transformer') {
+        const tr = cfg.transformer || {}
+        const nl = parseInt(tr.numLayers, 10)
+        const dm = parseInt(tr.dModel, 10)
+        const nh = parseInt(tr.numHeads, 10)
+        const df = parseInt(tr.dff, 10)
+        const dp = parseFloat(tr.dropout)
+
+        let dModelHeadError = ''
+        if (Number.isFinite(dm) && Number.isFinite(nh) && nh > 0) {
+          if (dm % nh !== 0) dModelHeadError = 'dModel must be divisible by numHeads'
+        }
+
+        errs[b.type] = {
+          numLayers: (!Number.isFinite(nl) || nl < 1) ? 'Must be integer >= 1' : '',
+          dModel: (!Number.isFinite(dm) || dm < 1) ? 'Must be integer >= 1' : dModelHeadError,
+          numHeads: (!Number.isFinite(nh) || nh < 1) ? 'Must be integer >= 1' : '',
+          dff: (!Number.isFinite(df) || df < 1) ? 'Must be integer >= 1' : '',
+          dropout: (Number.isFinite(dp) ? (dp < 0 || dp > 1) : true) ? 'Must be number between 0 and 1' : '',
+        }
       } else {
         errs[b.type] = { hiddenLayers: '', hiddenUnits: '' }
       }
@@ -42,6 +62,27 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
     const valid = Object.values(learnerErrors).every((e) => Object.values(e).every((v) => !v))
     onValidityChange?.(valid)
   }, [learnerErrors, onValidityChange])
+
+  // If the parent disables the Transformer option, clean up any existing
+  // Transformer selections by clearing the arch and transformer config for
+  // affected learners and notify the parent via onChange.
+  React.useEffect(() => {
+    if (!showTransformer) {
+      let changed = false
+      const next = { ...value }
+      for (const b of learners || []) {
+        const cfg = next[b.type] || {}
+        if (cfg.arch === 'Transformer') {
+          const newCfg = { ...cfg }
+          if (newCfg.transformer) delete newCfg.transformer
+          newCfg.arch = ''
+          next[b.type] = newCfg
+          changed = true
+        }
+      }
+      if (changed) onChange?.(next)
+    }
+  }, [showTransformer, learners, value, onChange])
 
   return (
     <Box sx={{ p: 2 }}>
@@ -93,8 +134,13 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
                               const nextCfg = { ...prev, arch }
                             if (arch === 'MLP') {
                               if (!nextCfg.mlp) nextCfg.mlp = { hiddenLayers: '1', hiddenUnits: '64', activation: 'relu' }
+                              if (nextCfg.transformer) delete nextCfg.transformer
+                            } else if (arch === 'Transformer') {
+                              if (!nextCfg.transformer) nextCfg.transformer = { numLayers: '6', dModel: '512', numHeads: '8', dff: '2048', dropout: '0.1' }
+                              if (nextCfg.mlp) delete nextCfg.mlp
                             } else {
                               if (nextCfg.mlp) delete nextCfg.mlp
+                              if (nextCfg.transformer) delete nextCfg.transformer
                             }
                               const updated = { ...value, [b.type]: nextCfg }
                               onChange?.(updated)
@@ -102,6 +148,7 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
                         >
                           <MenuItem value="Linear">Linear</MenuItem>
                           <MenuItem value="MLP">MLP</MenuItem>
+                          {showTransformer && <MenuItem value="Transformer">Transformer</MenuItem>}
                         </Select>
                       </FormControl>
 
@@ -156,6 +203,89 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
                             <MenuItem value="tanh">Tanh</MenuItem>
                             <MenuItem value="sigmoid">Sigmoid</MenuItem>
                           </TextField>
+                        </Box>
+                      )}
+
+                      {value[b.type]?.arch === 'Transformer' && showTransformer && (
+                        <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <TextField
+                            label="Encoder layers"
+                            type="number"
+                            size="small"
+                            value={value[b.type]?.transformer?.numLayers ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), transformer: { ...(value[b.type]?.transformer || {}), numLayers: v } } }
+                              onChange?.(updated)
+                            }}
+                            error={Boolean(learnerErrors[b.type]?.numLayers)}
+                            helperText={learnerErrors[b.type]?.numLayers || ' '}
+                            sx={{ width: 160 }}
+                          />
+
+                          <TextField
+                            label="dModel"
+                            type="number"
+                            size="small"
+                            value={value[b.type]?.transformer?.dModel ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), transformer: { ...(value[b.type]?.transformer || {}), dModel: v } } }
+                              onChange?.(updated)
+                            }}
+                            error={Boolean(learnerErrors[b.type]?.dModel)}
+                            helperText={learnerErrors[b.type]?.dModel || ' '}
+                            sx={{ width: 140 }}
+                          />
+
+                          <TextField
+                            label="Heads"
+                            type="number"
+                            size="small"
+                            value={value[b.type]?.transformer?.numHeads ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), transformer: { ...(value[b.type]?.transformer || {}), numHeads: v } } }
+                              onChange?.(updated)
+                            }}
+                            error={Boolean(learnerErrors[b.type]?.numHeads)}
+                            helperText={learnerErrors[b.type]?.numHeads || ' '}
+                            sx={{ width: 120 }}
+                          />
+
+                          <TextField
+                            label="FF dim"
+                            type="number"
+                            size="small"
+                            value={value[b.type]?.transformer?.dff ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), transformer: { ...(value[b.type]?.transformer || {}), dff: v } } }
+                              onChange?.(updated)
+                            }}
+                            error={Boolean(learnerErrors[b.type]?.dff)}
+                            helperText={learnerErrors[b.type]?.dff || ' '}
+                            sx={{ width: 140 }}
+                          />
+
+                          {/* Transformer activation option intentionally removed from UI */}
+                          <TextField
+                            label="Dropout"
+                            type="number"
+                            inputProps={{ step: '0.01', min: '0', max: '1' }}
+                            size="small"
+                            value={value[b.type]?.transformer?.dropout ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), transformer: { ...(value[b.type]?.transformer || {}), dropout: v } } }
+                              onChange?.(updated)
+                            }}
+                            error={Boolean(learnerErrors[b.type]?.dropout)}
+                            helperText={learnerErrors[b.type]?.dropout || ' '}
+                            sx={{ width: 120 }}
+                          />
+
+                          
                         </Box>
                       )}
                     </Box>
