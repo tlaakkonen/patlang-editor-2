@@ -146,7 +146,7 @@ class CodeGenerator {
     }
 
     preamble() {
-        if (!Object.entries(this.wizardState.learnerConfigs).every(([_, value]) => value.arch !== 'Transformer')) {
+        if (!Object.entries(this.wizardState.learnerConfigs).every((x) => x[1].arch !== 'Transformer')) {
             this.addLine(POSENC_DEF)
         } else {
             this.addLine('import torch')

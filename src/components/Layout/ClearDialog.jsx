@@ -5,18 +5,24 @@ import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
 import Typography from '@mui/material/Typography'
 import Button from '@mui/material/Button'
+import { del as idbDel } from 'idb-keyval'
 
 export default function ClearDialog({ open, onClose, onConfirm }) {
-  function handleClear() {
+  async function handleClear() {
     if (onConfirm) {
       onConfirm()
       return
     }
-    // default behavior: remove local storage key and reload
+    // default behavior: remove local storage key, delete MNIST from IndexedDB and reload
     try {
       localStorage.removeItem('patlang:v1')
     } catch {
       // ignore
+    }
+    try {
+      await idbDel('patlang:mnist')
+    } catch (e) {
+      console.error('Failed to delete MNIST from IndexedDB', e)
     }
     onClose()
     // reload to ensure app re-initializes from defaults

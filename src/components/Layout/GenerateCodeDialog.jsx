@@ -95,34 +95,10 @@ export default function GenerateCodeDialog({ open, onClose }) {
       if (nextOutputWeights[eq.type] === undefined) nextOutputWeights[eq.type] = '1'
     }
 
-    // output losses: default per-output-node per-wire based on one-hot flag
+    // output losses: keep any explicit user-configured values only; do not
+    // auto-populate defaults here so that the EquationsStep component can
+    // compute render-time defaults based on the current `oneHot` mapping.
     const nextOutputLosses = { ...(wizardState.outputLosses || {}) }
-    for (const eq of equations) {
-      if (!nextOutputLosses[eq.type]) {
-        const lhsDiagram = diagramsSection?.items?.find((d) => d.type === eq['lhs-type'])
-        const outputNodes = (lhsDiagram?.nodes || []).filter((n) => {
-          const boxDef = boxesSection?.items?.find((b) => b.type === n.data?.type)
-          return boxDef?.kind === 'output'
-        })
-        const perNode = {}
-        for (const node of outputNodes) {
-          const boxDef = boxesSection?.items?.find((b) => b.type === node.data?.type) || {}
-          const inputs = boxDef.inputs || []
-          const nodeType = boxDef.type || node.data?.type
-          const prevEq = wizardState.outputLosses?.[eq.type] || {}
-          const prevNode = prevEq?.[nodeType] || {}
-          const nodeMap = {}
-          for (let idx = 0; idx < inputs.length; idx++) {
-            const wireType = inputs[idx]
-            const indexKey = idx
-            if (prevNode && Object.prototype.hasOwnProperty.call(prevNode, indexKey)) nodeMap[indexKey] = prevNode[indexKey]
-            else nodeMap[indexKey] = (nextWireOneHot?.[wireType] ? 'CE' : 'L2')
-          }
-          perNode[nodeType] = nodeMap
-        }
-        nextOutputLosses[eq.type] = perNode
-      }
-    }
 
     // prune removed keys
     for (const k of Object.keys(wizardState.outputLearners || {})) {
@@ -214,6 +190,48 @@ export default function GenerateCodeDialog({ open, onClose }) {
   const handleNext = () => {
     // double-check before advancing
     if (!canAdvance(activeStep)) return
+    // If we're leaving the Equations step, persist any render-time defaults
+    // for output losses into wizardState so downstream code sees explicit
+    // loss values. We compute defaults only where the user hasn't provided
+    // a value yet (so we don't overwrite user choices).
+    if (activeStep === 3) {
+      const nextStep = Math.min(activeStep + 1, steps.length - 1)
+      setWizardState((prev) => {
+        const diagramsSection = (sections || []).find((s) => s.key === 'diagrams')
+        const boxesSection = (sections || []).find((s) => s.key === 'boxes')
+        const nextOutputLosses = { ...(prev.outputLosses || {}) }
+        for (const eq of equations) {
+          const lhsDiagram = diagramsSection?.items?.find((d) => d.type === eq['lhs-type'])
+          const outputNodes = (lhsDiagram?.nodes || []).filter((n) => {
+            const boxDef = boxesSection?.items?.find((b) => b.type === n.data?.type)
+            return boxDef?.kind === 'output'
+          })
+          const perNode = { ...(nextOutputLosses[eq.type] || {}) }
+          for (const node of outputNodes) {
+            const boxDef = boxesSection?.items?.find((b) => b.type === node.data?.type) || {}
+            const inputs = boxDef.inputs || []
+            const nodeType = boxDef.type || node.data?.type
+            const prevEq = prev.outputLosses?.[eq.type] || {}
+            const prevNode = prevEq?.[nodeType] || {}
+            const nodeMap = { ...(perNode[nodeType] || {}) }
+            for (let idx = 0; idx < inputs.length; idx++) {
+              const wireType = inputs[idx]
+              const indexKey = idx
+              if (prevNode && Object.prototype.hasOwnProperty.call(prevNode, indexKey) && prevNode[indexKey] !== undefined && prevNode[indexKey] !== null && prevNode[indexKey] !== '') {
+                nodeMap[indexKey] = prevNode[indexKey]
+              } else if (!Object.prototype.hasOwnProperty.call(nodeMap, indexKey) || nodeMap[indexKey] === undefined || nodeMap[indexKey] === null || nodeMap[indexKey] === '') {
+                nodeMap[indexKey] = (prev.wireOneHot?.[wireType] ? 'CE' : 'L2')
+              }
+            }
+            perNode[nodeType] = nodeMap
+          }
+          nextOutputLosses[eq.type] = perNode
+        }
+        return { ...prev, outputLosses: nextOutputLosses, activeStep: nextStep }
+      })
+      setActiveStep((s) => Math.min(s + 1, steps.length - 1))
+      return
+    }
     setActiveStep((s) => {
       const next = Math.min(s + 1, steps.length - 1)
       setWizardState((w) => ({ ...w, activeStep: next }))

@@ -3,18 +3,22 @@ import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import IconButton from '@mui/material/IconButton'
-import Button from '@mui/material/Button'
 import CloseIcon from '@mui/icons-material/Close'
 import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
+import LinearProgress from '@mui/material/LinearProgress'
+import Typography from '@mui/material/Typography'
 import ValidationStep from './TrainSteps/ValidationStep'
 import DimensionsStep from './TrainSteps/DimensionsStep'
 import ArchitectureStep from './GenerateSteps/ArchitectureStep'
 import EquationsStep from './GenerateSteps/EquationsStep'
-import FinishStep from './TrainSteps/FinishStep'
+import TrainStep from './TrainSteps/TrainStep'
 import WizardStepper from './GenerateSteps/WizardStepper'
 // step components contain their own UI imports
 import { usePalette } from '../../state/PaletteContext'
+import { set as idbSet, get as idbGet } from 'idb-keyval'
+import mnistUrl1 from '../../assets/mnist1.bin'
+import mnistUrl2 from '../../assets/mnist2.bin'
 
 export default function TrainLiveDialog({ open, onClose }) {
   const { sections, findItemByType } = usePalette()
@@ -29,6 +33,10 @@ export default function TrainLiveDialog({ open, onClose }) {
     const boxes = (sections || []).find((s) => s.key === 'boxes')?.items || []
     return boxes.filter((b) => b?.kind === 'learner')
   }, [sections])
+  const dataBoxes = React.useMemo(() => {
+    const boxes = (sections || []).find((s) => s.key === 'boxes')?.items || []
+    return boxes.filter((b) => b?.kind === 'data')
+  }, [sections])
 
   // Controlled wizard state (no localStorage persistence)
   const DEFAULT_WIZARD = { 
@@ -36,6 +44,7 @@ export default function TrainLiveDialog({ open, onClose }) {
     wireDims: {},
     wireSelects: {},
     wireOneHot: {},
+    dataAssignments: {},
     learnerConfigs: {},
     outputLosses: {},
     outputLearners: {},
@@ -43,6 +52,41 @@ export default function TrainLiveDialog({ open, onClose }) {
   };
 
   const [wizardState, setWizardState] = React.useState(DEFAULT_WIZARD)
+
+  // MNIST download state: before the MNIST dataset is downloaded, the
+  // Train step's Start button should be disabled. While downloading show
+  // a modal progress indicator.
+  const [mnistDownloading, setMnistDownloading] = React.useState(false)
+  const [mnistAvailable, setMnistAvailable] = React.useState(false)
+  const [mnistProgress, setMnistProgress] = React.useState(0)
+
+  // Persist models while dialog is open and navigating steps; dispose on close
+  const [liveModels, setLiveModels] = React.useState(null)
+  const handleClose = React.useCallback(() => {
+    try {
+      const m = liveModels || {}
+      for (const k of Object.keys(m)) {
+        try { m[k]?.dispose && m[k].dispose() } catch {}
+      }
+    } catch {}
+    setLiveModels(null)
+    onClose && onClose()
+  }, [liveModels, onClose])
+
+  // On mount, check IndexedDB for an existing MNIST payload so availability
+  // persists across page reloads / sessions.
+  React.useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const stored = await idbGet('patlang:mnist')
+        if (mounted && stored) setMnistAvailable(true)
+      } catch (e) {
+        console.error('Failed to read MNIST from IndexedDB', e)
+      }
+    })()
+    return () => { mounted = false }
+  }, [])
 
   // reconcile wizardState when wire types or learners change between open/close
   React.useEffect(() => {
@@ -52,10 +96,20 @@ export default function TrainLiveDialog({ open, onClose }) {
     const nextWireOneHot = {}
     for (const w of wires) {
       const existing = wizardState.wireDims?.[w.type]
-      nextWireDims[w.type] = existing !== undefined ? existing : '1'
+      // default to empty selection (None) so the new UI can force the user to choose
+      nextWireDims[w.type] = existing !== undefined ? existing : ''
       const sel = wizardState.wireSelects?.[w.type]
-      if (sel !== undefined) nextWireSelects[w.type] = sel
-      else nextWireSelects[w.type] = (['1','2','4','8','16','32','64','128','256','512'].includes(String(nextWireDims[w.type])) ? String(nextWireDims[w.type]) : (nextWireDims[w.type] === '' ? '' : 'custom'))
+      if (sel !== undefined) {
+        nextWireSelects[w.type] = sel
+      } else {
+        // DimensionsStep expects select values among: '', 'mnist-images', 'mnist-labels', 'custom'
+        // Use the same MNIST dimension strings used in the DimensionsStep component
+        const dim = nextWireDims[w.type]
+        if (dim === '784') nextWireSelects[w.type] = 'mnist-images'
+        else if (dim === '10') nextWireSelects[w.type] = 'mnist-labels'
+        else if (dim === '' || dim === undefined) nextWireSelects[w.type] = ''
+        else nextWireSelects[w.type] = 'custom'
+      }
       const existingOne = wizardState.wireOneHot?.[w.type]
       nextWireOneHot[w.type] = existingOne !== undefined ? existingOne : false
     }
@@ -93,34 +147,10 @@ export default function TrainLiveDialog({ open, onClose }) {
       if (nextOutputWeights[eq.type] === undefined) nextOutputWeights[eq.type] = '1'
     }
 
-    // output losses: default per-output-node per-wire based on one-hot flag
+    // output losses: keep any explicit user-configured values only; do not
+    // auto-populate defaults here so that the EquationsStep component can
+    // compute render-time defaults based on the current `oneHot` mapping.
     const nextOutputLosses = { ...(wizardState.outputLosses || {}) }
-    for (const eq of equations) {
-      if (!nextOutputLosses[eq.type]) {
-        const lhsDiagram = diagramsSection?.items?.find((d) => d.type === eq['lhs-type'])
-        const outputNodes = (lhsDiagram?.nodes || []).filter((n) => {
-          const boxDef = boxesSection?.items?.find((b) => b.type === n.data?.type)
-          return boxDef?.kind === 'output'
-        })
-        const perNode = {}
-        for (const node of outputNodes) {
-          const boxDef = boxesSection?.items?.find((b) => b.type === node.data?.type) || {}
-          const inputs = boxDef.inputs || []
-          const nodeType = boxDef.type || node.data?.type
-          const prevEq = wizardState.outputLosses?.[eq.type] || {}
-          const prevNode = prevEq?.[nodeType] || {}
-          const nodeMap = {}
-          for (let idx = 0; idx < inputs.length; idx++) {
-            const wireType = inputs[idx]
-            const indexKey = idx
-            if (prevNode && Object.prototype.hasOwnProperty.call(prevNode, indexKey)) nodeMap[indexKey] = prevNode[indexKey]
-            else nodeMap[indexKey] = (nextWireOneHot?.[wireType] ? 'CE' : 'L2')
-          }
-          perNode[nodeType] = nodeMap
-        }
-        nextOutputLosses[eq.type] = perNode
-      }
-    }
 
     // prune removed keys
     for (const k of Object.keys(wizardState.outputLearners || {})) {
@@ -145,6 +175,16 @@ export default function TrainLiveDialog({ open, onClose }) {
       if (!learners.find((b) => b.type === k)) delete nextLearnerConfigs[k]
     }
 
+    // data assignments: for boxes with kind==='data', default to empty (no selection)
+    const nextDataAssignments = { ...(wizardState.dataAssignments || {}) }
+    for (const b of (boxesSection?.items || []).filter((bb) => bb.kind === 'data')) {
+      if (nextDataAssignments[b.type] === undefined) nextDataAssignments[b.type] = ''
+    }
+    // prune removed data keys
+    for (const k of Object.keys(nextDataAssignments)) {
+      if (!(boxesSection?.items || []).find((bb) => bb.type === k && bb.kind === 'data')) delete nextDataAssignments[k]
+    }
+
     // if changed, update
     const changed = JSON.stringify(nextWireDims) !== JSON.stringify(wizardState.wireDims) ||
       JSON.stringify(nextWireSelects) !== JSON.stringify(wizardState.wireSelects) ||
@@ -152,9 +192,10 @@ export default function TrainLiveDialog({ open, onClose }) {
       JSON.stringify(nextLearnerConfigs) !== JSON.stringify(wizardState.learnerConfigs) ||
       JSON.stringify(nextOutputLearners) !== JSON.stringify(wizardState.outputLearners) ||
       JSON.stringify(nextOutputWeights) !== JSON.stringify(wizardState.outputWeights) ||
-      JSON.stringify(nextOutputLosses) !== JSON.stringify(wizardState.outputLosses)
+      JSON.stringify(nextOutputLosses) !== JSON.stringify(wizardState.outputLosses) ||
+      JSON.stringify(nextDataAssignments) !== JSON.stringify(wizardState.dataAssignments)
     if (changed) {
-      setWizardState((s) => ({ ...s, wireDims: nextWireDims, wireSelects: nextWireSelects, wireOneHot: nextWireOneHot, learnerConfigs: nextLearnerConfigs, outputLearners: nextOutputLearners, outputWeights: nextOutputWeights, outputLosses: nextOutputLosses }))
+      setWizardState((s) => ({ ...s, wireDims: nextWireDims, wireSelects: nextWireSelects, wireOneHot: nextWireOneHot, learnerConfigs: nextLearnerConfigs, outputLearners: nextOutputLearners, outputWeights: nextOutputWeights, outputLosses: nextOutputLosses, dataAssignments: nextDataAssignments }))
     }
   }, [wires, learners, wizardState, equations, sections])
 
@@ -175,13 +216,16 @@ export default function TrainLiveDialog({ open, onClose }) {
 
   // Architecture-specific state moved into ArchitectureStep
 
-  const steps = ['Validation', 'Dimensions', 'Architecture', 'Equations', 'Finish']
+  const steps = ['Validation', 'Dimensions', 'Architecture', 'Equations', 'Train']
 
   // stable callbacks passed to child steps to avoid re-creating functions
   // on every render (which caused child effects to rerun and produced
   // update depth / setState-in-render errors).
   const dimsOnChange = React.useCallback((nextWireDims, nextWireSelects, nextWireOneHot) => {
     setWizardState((s) => ({ ...s, wireDims: nextWireDims, wireSelects: nextWireSelects, wireOneHot: nextWireOneHot || {} }))
+  }, [])
+  const dataOnChange = React.useCallback((nextDataAssignments) => {
+    setWizardState((s) => ({ ...s, dataAssignments: nextDataAssignments || {} }))
   }, [])
   const dimsOnValidity = React.useCallback((valid) => setStepValidity((s) => ({ ...s, 1: valid })), [setStepValidity])
   const cfgOnChange = React.useCallback((nextLearnerConfigs) => {
@@ -204,14 +248,56 @@ export default function TrainLiveDialog({ open, onClose }) {
     if (step === 0) return !hasErrors
     if (step === 1) return stepValidity[1] !== false
     if (step === 2) return stepValidity[2] !== false
-  if (step === 3) return equations && equations.length > 0
-  if (step === 4) return true
+    if (step === 3) return equations && equations.length > 0
+    if (step === 4) return true
     return true
   }
 
   const handleNext = () => {
     // double-check before advancing
     if (!canAdvance(activeStep)) return
+    // If we're leaving the Equations step, persist any render-time defaults
+    // for output losses into wizardState so downstream code sees explicit
+    // loss values. We compute defaults only where the user hasn't provided
+    // a value yet (so we don't overwrite user choices).
+    if (activeStep === 3) {
+      const nextStep = Math.min(activeStep + 1, steps.length - 1)
+      setWizardState((prev) => {
+        const diagramsSection = (sections || []).find((s) => s.key === 'diagrams')
+        const boxesSection = (sections || []).find((s) => s.key === 'boxes')
+        const nextOutputLosses = { ...(prev.outputLosses || {}) }
+        for (const eq of equations) {
+          const lhsDiagram = diagramsSection?.items?.find((d) => d.type === eq['lhs-type'])
+          const outputNodes = (lhsDiagram?.nodes || []).filter((n) => {
+            const boxDef = boxesSection?.items?.find((b) => b.type === n.data?.type)
+            return boxDef?.kind === 'output'
+          })
+          const perNode = { ...(nextOutputLosses[eq.type] || {}) }
+          for (const node of outputNodes) {
+            const boxDef = boxesSection?.items?.find((b) => b.type === node.data?.type) || {}
+            const inputs = boxDef.inputs || []
+            const nodeType = boxDef.type || node.data?.type
+            const prevEq = prev.outputLosses?.[eq.type] || {}
+            const prevNode = prevEq?.[nodeType] || {}
+            const nodeMap = { ...(perNode[nodeType] || {}) }
+            for (let idx = 0; idx < inputs.length; idx++) {
+              const wireType = inputs[idx]
+              const indexKey = idx
+              if (prevNode && Object.prototype.hasOwnProperty.call(prevNode, indexKey) && prevNode[indexKey] !== undefined && prevNode[indexKey] !== null && prevNode[indexKey] !== '') {
+                nodeMap[indexKey] = prevNode[indexKey]
+              } else if (!Object.prototype.hasOwnProperty.call(nodeMap, indexKey) || nodeMap[indexKey] === undefined || nodeMap[indexKey] === null || nodeMap[indexKey] === '') {
+                nodeMap[indexKey] = (prev.wireOneHot?.[wireType] ? 'CE' : 'L2')
+              }
+            }
+            perNode[nodeType] = nodeMap
+          }
+          nextOutputLosses[eq.type] = perNode
+        }
+        return { ...prev, outputLosses: nextOutputLosses, activeStep: nextStep }
+      })
+      setActiveStep((s) => Math.min(s + 1, steps.length - 1))
+      return
+    }
     setActiveStep((s) => {
       const next = Math.min(s + 1, steps.length - 1)
       setWizardState((w) => ({ ...w, activeStep: next }))
@@ -224,8 +310,68 @@ export default function TrainLiveDialog({ open, onClose }) {
 
   const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0))
 
+  // Trigger to download the MNIST dataset (demo: fetch a local example
+  // Trigger to download the MNIST dataset using the static asset URL
+  // imported via Vite. The file is binary Float32 little-endian data.
+  // We deserialize it into a Float32Array (respecting little-endian)
+  // and persist into IndexedDB.
+  const handleDownloadMnist = React.useCallback(async () => {
+    try {
+      setMnistDownloading(true)
+      setMnistProgress(0)
+
+      // Fetch both parts and concat them. We use a simple two-step
+      // fetch (first part, then second) and update progress to 50/100
+      // to keep the UI responsive. This keeps the code simple and
+      // avoids complex streaming merge logic.
+      const parts = [mnistUrl1, mnistUrl2]
+      const buffers = []
+
+      for (let i = 0; i < parts.length; i++) {
+        const resp = await fetch(parts[i])
+        if (!resp.ok) throw new Error(`Failed to fetch MNIST part ${i + 1} (${resp.status})`)
+        // Read as arrayBuffer (indeterminate progress per-part)
+        const ab = await resp.arrayBuffer()
+        buffers.push(ab)
+        // update progress roughly (50% after first, 100% after second)
+        setMnistProgress(Math.round(((i + 1) / parts.length) * 100))
+      }
+
+      // Concatenate ArrayBuffers into one Uint8Array
+      let total = 0
+      for (const b of buffers) total += b.byteLength
+      const abAll = new Uint8Array(total)
+      let offset = 0
+      for (const b of buffers) {
+        abAll.set(new Uint8Array(b), offset)
+        offset += b.byteLength
+      }
+
+      if (abAll.byteLength % 4 !== 0) throw new Error('MNIST binary length is not a multiple of 4')
+      const dv = new DataView(abAll.buffer)
+      const len = abAll.byteLength / 4
+      const floats = new Float32Array(len)
+      for (let i = 0; i < len; i++) {
+        floats[i] = dv.getFloat32(i * 4, true)
+      }
+
+      try {
+        await idbSet('patlang:mnist', floats)
+      } catch (e) {
+        console.error('Failed to write MNIST to IndexedDB', e)
+      }
+      setMnistAvailable(true)
+      setMnistProgress(100)
+    } catch (e) {
+      console.error('MNIST download failed', e)
+      setMnistAvailable(false)
+    } finally {
+      setMnistDownloading(false)
+    }
+  }, [])
+
   return (
-  <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" keepMounted>
+  <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md" keepMounted>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
           <Box component="span" sx={{ fontWeight: 500 }}>Train Live</Box>
@@ -233,7 +379,7 @@ export default function TrainLiveDialog({ open, onClose }) {
         {/* Stepper moved to the dialog actions for bottom placement */}
         <IconButton
           aria-label="close"
-          onClick={onClose}
+          onClick={handleClose}
           sx={{ position: 'absolute', right: 8, top: 8 }}
           size="small"
         >
@@ -261,6 +407,9 @@ export default function TrainLiveDialog({ open, onClose }) {
                 oneHot={wizardState.wireOneHot}
                 onChange={dimsOnChange}
                 onValidityChange={dimsOnValidity}
+                dataBoxes={dataBoxes}
+                dataAssignments={wizardState.dataAssignments || {}}
+                onDataAssignmentsChange={dataOnChange}
               />
             )}
 
@@ -285,18 +434,45 @@ export default function TrainLiveDialog({ open, onClose }) {
                 learnersOnChange={eqLearnersOnChange}
                 weightsValue={wizardState.outputWeights || {}}
                 weightsOnChange={eqWeightsOnChange}
+                allowSSIM={true}
+                wireSelects={wizardState.wireSelects || {}}
               />
             )}
             {activeStep === 4 && (
-              <FinishStep
-                wizardState={wizardState}
-                sections={sections}
-              />
+              <TrainStep
+                  wizardState={wizardState}
+                  sections={sections}
+                  mnistReady={mnistAvailable}
+                  mnistDownloading={mnistDownloading}
+                  onDownloadMnist={handleDownloadMnist}
+                  modelsProp={liveModels}
+                  onModelsChange={setLiveModels}
+                />
             )}
           </Box>
         </Box>
       </DialogContent>
       <Divider sx={{ mt: 1 }} />
+      {/* Progress modal while downloading MNIST */}
+      <Dialog open={mnistDownloading} maxWidth="xs">
+        <DialogTitle>Downloading MNIST</DialogTitle>
+        <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'stretch' }}>
+          {mnistProgress > 0 ? (
+            <>
+              <LinearProgress variant="determinate" value={mnistProgress} sx={{
+                "& .MuiLinearProgress-bar": {
+                    transition: "none"
+                }
+              }} />
+              <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                <Typography variant="caption">{mnistProgress}%</Typography>
+              </Box>
+            </>
+          ) : (
+            <LinearProgress />
+          )}
+        </Box>
+      </Dialog>
       <WizardStepper
         steps={steps}
         activeStep={activeStep}

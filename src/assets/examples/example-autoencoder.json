@@ -1,0 +1,303 @@
+{
+  "sections": [
+    {
+      "title": "Diagrams",
+      "key": "diagrams",
+      "items": [
+        {
+          "type": "init-diag",
+          "label": "Autoencoder LHS",
+          "opened": false,
+          "nodes": [
+            {
+              "id": "n_10",
+              "type": "custom",
+              "position": {
+                "x": 0,
+                "y": 241.5
+              },
+              "data": {
+                "type": "boxes-box-1764881042253"
+              },
+              "measured": {
+                "width": 58,
+                "height": 72
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_11",
+              "type": "custom",
+              "position": {
+                "x": 101.5,
+                "y": 249.25
+              },
+              "data": {
+                "type": "boxes-box-1764881021110"
+              },
+              "measured": {
+                "width": 52,
+                "height": 48
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_12",
+              "type": "custom",
+              "position": {
+                "x": 214.5,
+                "y": 243.75
+              },
+              "data": {
+                "type": "boxes-box-1764881031490"
+              },
+              "measured": {
+                "width": 53,
+                "height": 48
+              },
+              "selected": false,
+              "dragging": false
+            },
+            {
+              "id": "n_13",
+              "type": "custom",
+              "position": {
+                "x": 298,
+                "y": 237.75
+              },
+              "data": {
+                "type": "boxes-box-1764881051596"
+              },
+              "measured": {
+                "width": 73,
+                "height": 48
+              },
+              "selected": false,
+              "dragging": false
+            }
+          ],
+          "edges": [
+            {
+              "source": "n_11",
+              "sourceHandle": "out-0",
+              "target": "n_12",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#cddf58",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_11out-0-n_12in-0"
+            },
+            {
+              "source": "n_10",
+              "sourceHandle": "out-0",
+              "target": "n_11",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#87da60",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_10out-0-n_11in-0"
+            },
+            {
+              "source": "n_12",
+              "sourceHandle": "out-0",
+              "target": "n_13",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#87da60",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_12out-0-n_13in-0"
+            }
+          ]
+        },
+        {
+          "type": "diagrams-diagram-1764880967948",
+          "label": "Autoencode RHS",
+          "nodes": [
+            {
+              "id": "n_14",
+              "type": "custom",
+              "position": {
+                "x": 65,
+                "y": 231.75
+              },
+              "data": {
+                "type": "boxes-box-1764881042253"
+              },
+              "measured": {
+                "width": 58,
+                "height": 72
+              }
+            },
+            {
+              "id": "n_15",
+              "type": "custom",
+              "position": {
+                "x": 237.5,
+                "y": 240.75
+              },
+              "data": {
+                "type": "boxes-box-1764881051596"
+              },
+              "measured": {
+                "width": 73,
+                "height": 48
+              },
+              "selected": false,
+              "dragging": false
+            }
+          ],
+          "edges": [
+            {
+              "source": "n_14",
+              "sourceHandle": "out-0",
+              "target": "n_15",
+              "targetHandle": "in-0",
+              "style": {
+                "stroke": "#87da60",
+                "strokeWidth": 3
+              },
+              "id": "xy-edge__n_14out-0-n_15in-0"
+            }
+          ],
+          "opened": true
+        }
+      ]
+    },
+    {
+      "title": "Wires",
+      "key": "wires",
+      "items": [
+        {
+          "type": "wires-wire-1764880977495",
+          "label": "Image",
+          "color": "#87da60"
+        },
+        {
+          "type": "wires-wire-1764880988571",
+          "label": "Label",
+          "color": "#0d08ff"
+        },
+        {
+          "type": "wires-wire-1764881006384",
+          "label": "Latent",
+          "color": "#cddf58"
+        }
+      ]
+    },
+    {
+      "title": "Boxes",
+      "key": "boxes",
+      "items": [
+        {
+          "type": "boxes-box-1764881021110",
+          "label": "Enc",
+          "color": "#df4d4d",
+          "kind": "learner",
+          "inputs": [
+            "wires-wire-1764880977495"
+          ],
+          "outputs": [
+            "wires-wire-1764881006384"
+          ]
+        },
+        {
+          "type": "boxes-box-1764881031490",
+          "label": "Dec",
+          "color": "#bc0ec0",
+          "kind": "learner",
+          "inputs": [
+            "wires-wire-1764881006384"
+          ],
+          "outputs": [
+            "wires-wire-1764880977495"
+          ]
+        },
+        {
+          "type": "boxes-box-1764881042253",
+          "label": "Data",
+          "color": "#dddddd",
+          "kind": "data",
+          "inputs": [],
+          "outputs": [
+            "wires-wire-1764880977495",
+            "wires-wire-1764880988571"
+          ]
+        },
+        {
+          "type": "boxes-box-1764881051596",
+          "label": "Output",
+          "color": "#dddddd",
+          "kind": "output",
+          "inputs": [
+            "wires-wire-1764880977495"
+          ],
+          "outputs": []
+        }
+      ]
+    },
+    {
+      "title": "Equations",
+      "key": "equations",
+      "items": [
+        {
+          "type": "equations-equation-1764881121965",
+          "label": "Autoencoder",
+          "lhs-type": "init-diag",
+          "rhs-type": "diagrams-diagram-1764880967948"
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "n_14",
+      "type": "custom",
+      "position": {
+        "x": 65,
+        "y": 231.75
+      },
+      "data": {
+        "type": "boxes-box-1764881042253"
+      },
+      "measured": {
+        "width": 58,
+        "height": 72
+      }
+    },
+    {
+      "id": "n_15",
+      "type": "custom",
+      "position": {
+        "x": 237.5,
+        "y": 240.75
+      },
+      "data": {
+        "type": "boxes-box-1764881051596"
+      },
+      "measured": {
+        "width": 73,
+        "height": 48
+      },
+      "selected": false,
+      "dragging": false
+    }
+  ],
+  "edges": [
+    {
+      "source": "n_14",
+      "sourceHandle": "out-0",
+      "target": "n_15",
+      "targetHandle": "in-0",
+      "style": {
+        "stroke": "#87da60",
+        "strokeWidth": 3
+      },
+      "id": "xy-edge__n_14out-0-n_15in-0"
+    }
+  ]
+}

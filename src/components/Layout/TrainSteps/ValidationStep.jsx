@@ -121,6 +121,9 @@ export default function ValidationStep({ sections = [], findItemByType, open, on
 
   return (
     <Box>
+      <Typography variant="body1">In this wizard, you can train your learnable boxes to satisfy your specified equations on the MNIST dataset, live in the browser using TensorFlow.js. Note that only a subset of features are supported.</Typography>
+      <br/>
+
       {hasErrors ? (
         <Alert severity="error">
           <Box sx={{ mb: 1 }}>

@@ -18,7 +18,7 @@ import Chip from '@mui/material/Chip'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import { usePalette } from '../../../state/PaletteContext'
 
-export default function EquationsStep({ value = {}, onChange, oneHot = {}, learnersValue = {}, learnersOnChange, weightsValue = {}, weightsOnChange }) {
+export default function EquationsStep({ value = {}, onChange, oneHot = {}, learnersValue = {}, learnersOnChange, weightsValue = {}, weightsOnChange, allowSSIM = false, wireSelects = {} }) {
   const { sections } = usePalette()
   const equations = React.useMemo(() => (sections || []).find((s) => s.key === 'equations')?.items || [], [sections])
   const wiresSection = React.useMemo(() => (sections || []).find((s) => s.key === 'wires')?.items || [], [sections])
@@ -226,6 +226,9 @@ export default function EquationsStep({ value = {}, onChange, oneHot = {}, learn
                                       <MenuItem value="L1">L1</MenuItem>
                                       <MenuItem value="BCE">Binary CE</MenuItem>
                                       <MenuItem value="CE">Cross-entropy</MenuItem>
+                                      {allowSSIM && (
+                                        <MenuItem value="SSIM" disabled={(wireSelects?.[wireType] !== 'mnist-images')}>SSIM (images)</MenuItem>
+                                      )}
                                     </Select>
                                   </FormControl>
                                 </Box>

@@ -14,12 +14,15 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
+    "@mui/x-charts": "^8.20.0",
+    "@tensorflow/tfjs": "^4.22.0",
     "@xyflow/react": "^12.9.3",
     "core-js": "^3.47.0",
+    "idb-keyval": "^6.2.2",
     "mui-color-input": "^7.0.0",
-    "react": "^19.2.0",
+    "react": "^19.2.1",
     "react-device-detect": "^2.2.3",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
