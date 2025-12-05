@@ -17,7 +17,7 @@ import AddEquationDialog from './AddEquationDialog'
 
 export default function PaletteSection({ title, items = [], sectionKey }) {
   const [open, setOpen] = React.useState(true)
-  const { setSections } = usePalette()
+  const { setSections, nodes, setEdges, findItemByType } = usePalette()
   // dialog open state (local to this section)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingItem, setEditingItem] = React.useState(null)
@@ -53,6 +53,58 @@ export default function PaletteSection({ title, items = [], sectionKey }) {
             : s,
         ),
       )
+      // If a wire's color changed, update any existing edges that use that wire type
+      if (sectionKey === 'wires') {
+        const newColor = item.color
+        const wireType = editingItem.type
+        if (newColor && wireType) {
+          setEdges((prev) => {
+            return (prev || []).map((e) => {
+              try {
+                // determine wire type from the source node's output handle
+                const srcNode = (nodes || []).find((n) => n.id === e.source)
+                if (!srcNode) return e
+                const boxDef = findItemByType ? findItemByType('boxes', srcNode.data?.type) : null
+                if (!boxDef) return e
+                const m = String(e.sourceHandle || '').match(/out-(\d+)$/)
+                if (!m) return e
+                const idx = parseInt(m[1], 10)
+                const wType = (boxDef.outputs || [])[idx]
+                if (wType !== wireType) return e
+                return { ...e, style: { ...(e.style || {}), stroke: newColor } }
+              } catch (err) {
+                return e
+              }
+            })
+          })
+          // also update stored edges inside diagrams in the sections payload
+          setSections((prev) =>
+            (prev || []).map((s) => {
+              if (s.key !== 'diagrams') return s
+              const items = (s.items || []).map((diag) => {
+                const edges = (diag.edges || []).map((e) => {
+                  try {
+                    const srcNode = (diag.nodes || []).find((n) => n.id === e.source)
+                    if (!srcNode) return e
+                    const boxDef = findItemByType ? findItemByType('boxes', srcNode.data?.type) : null
+                    if (!boxDef) return e
+                    const m = String(e.sourceHandle || '').match(/out-(\d+)$/)
+                    if (!m) return e
+                    const idx = parseInt(m[1], 10)
+                    const wType = (boxDef.outputs || [])[idx]
+                    if (wType !== wireType) return e
+                    return { ...e, style: { ...(e.style || {}), stroke: newColor } }
+                  } catch (err) {
+                    return e
+                  }
+                })
+                return { ...diag, edges }
+              })
+              return { ...s, items }
+            }),
+          )
+        }
+      }
     } else {
       // append new item
       setSections((prev) => prev.map((s) => (s.key === sectionKey ? { ...s, items: [...(s.items || []), item] } : s)))
@@ -75,8 +127,8 @@ export default function PaletteSection({ title, items = [], sectionKey }) {
 
       <Collapse in={open} timeout="auto" unmountOnExit>
         <List disablePadding>
-          {items.map((it) => (
-            <PaletteItem key={it.type} item={it} sectionKey={sectionKey} onEdit={(e) => openEdit(it, e)} />
+          {items.map((it, idx) => (
+            <PaletteItem key={it.type} item={it} index={idx} sectionKey={sectionKey} onEdit={(e) => openEdit(it, e)} />
           ))}
         </List>
       </Collapse>

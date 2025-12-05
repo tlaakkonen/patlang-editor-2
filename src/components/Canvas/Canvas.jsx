@@ -5,6 +5,10 @@ import CustomNode from './CustomNode';
 import { usePalette } from '../../state/PaletteContext'
 import { isMobile, isIOS } from 'react-device-detect'
 import DeleteIcon from '@mui/icons-material/Delete'
+import UndoIcon from '@mui/icons-material/Undo'
+import RedoIcon from '@mui/icons-material/Redo'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ContentPasteIcon from '@mui/icons-material/ContentPaste'
 
 const nodeTypes = { custom: CustomNode };
 
@@ -12,18 +16,239 @@ export default function Canvas() {
     const reactFlowWrapper = useRef(null)
     const reactFlowInstance = useRef(null)
     const idCounter = useRef(10)
+    const edgeIdCounter = useRef(1)
+    // history of canvas states for undo (nodes/edges)
+    const undoStackRef = useRef([])
+    const redoStackRef = useRef([])
+    const isUndoingRef = useRef(false)
+    const lastHistoryPushAtRef = useRef(0)
+    const HISTORY_LIMIT = 100
+    // in-app clipboard (kept in-memory within the app session)
+    const clipboardRef = useRef(null)
 
     const { findItemByType, nodes, setNodes, edges, setEdges, setSections } = usePalette()
     const [selectedNodes, setSelectedNodes] = useState([])
     const [selectedEdges, setSelectedEdges] = useState([])
+    // keep live refs to current nodes/edges so we can snapshot right before changes
+    const nodesRef = useRef(nodes)
+    const edgesRef = useRef(edges)
+    useEffect(() => {
+        nodesRef.current = nodes
+    }, [nodes])
+    useEffect(() => {
+        edgesRef.current = edges
+    }, [edges])
+
+    // deep snapshot helper
+    const snapshotState = useCallback(() => ({
+        nodes: JSON.parse(JSON.stringify(nodesRef.current || [])),
+        edges: JSON.parse(JSON.stringify(edgesRef.current || [])),
+    }), [])
+
+    // push into undo history with basic throttling for drag-move spam
+    const pushHistory = useCallback(() => {
+        if (isUndoingRef.current) return
+        const now = Date.now()
+        // throttle very frequent pushes to avoid flooding during drags
+        if (now - (lastHistoryPushAtRef.current || 0) < 120) return
+        lastHistoryPushAtRef.current = now
+        const next = undoStackRef.current.concat([snapshotState()])
+        // cap history size
+        if (next.length > HISTORY_LIMIT) next.splice(0, next.length - HISTORY_LIMIT)
+        undoStackRef.current = next
+        // any new user action invalidates redo chain
+        redoStackRef.current = []
+    }, [snapshotState])
+
+    const undo = useCallback(() => {
+        const stack = undoStackRef.current
+        if (!stack || stack.length === 0) return
+        const current = snapshotState()
+        const prev = stack[stack.length - 1]
+        undoStackRef.current = stack.slice(0, -1)
+        isUndoingRef.current = true
+        try {
+            setNodes(prev.nodes || [])
+            setEdges(prev.edges || [])
+            // push current state into redo stack
+            const rnext = redoStackRef.current.concat([current])
+            if (rnext.length > HISTORY_LIMIT) rnext.splice(0, rnext.length - HISTORY_LIMIT)
+            redoStackRef.current = rnext
+        } finally {
+            // small timeout to ensure React state batch completes before allowing history push again
+            setTimeout(() => {
+                isUndoingRef.current = false
+            }, 0)
+        }
+    }, [setNodes, setEdges, snapshotState])
+
+    const redo = useCallback(() => {
+        const rstack = redoStackRef.current
+        if (!rstack || rstack.length === 0) return
+        const current = snapshotState()
+        const nextState = rstack[rstack.length - 1]
+        redoStackRef.current = rstack.slice(0, -1)
+        // moving forward: push current to undo
+        const unext = undoStackRef.current.concat([current])
+        if (unext.length > HISTORY_LIMIT) unext.splice(0, unext.length - HISTORY_LIMIT)
+        undoStackRef.current = unext
+        isUndoingRef.current = true
+        try {
+            setNodes(nextState.nodes || [])
+            setEdges(nextState.edges || [])
+        } finally {
+            setTimeout(() => {
+                isUndoingRef.current = false
+            }, 0)
+        }
+    }, [setNodes, setEdges, snapshotState])
+
+    // keyboard handler added below after copy/paste callbacks
+
+    // helper: compute viewport center in flow coordinates
+    const getFlowCenter = useCallback(() => {
+        if (!reactFlowWrapper.current || !reactFlowInstance.current) return { x: 0, y: 0 }
+        const rect = reactFlowWrapper.current.getBoundingClientRect()
+        const screenPt = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+        return reactFlowInstance.current.screenToFlowPosition(screenPt)
+    }, [])
+
+    // COPY current selection (selected nodes + internal edges)
+    const copySelection = useCallback(() => {
+        if (!selectedNodes || selectedNodes.length === 0) return
+        const selectedIds = new Set(selectedNodes.map((n) => n.id))
+        // capture full node objects from current state to ensure positions are up to date
+        const nodesToCopy = (nodesRef.current || []).filter((n) => selectedIds.has(n.id))
+        if (nodesToCopy.length === 0) return
+        // internal edges where both ends are in the selected node set
+        const edgesToCopy = (edgesRef.current || []).filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target))
+        // compute center of selection
+        const cx = nodesToCopy.reduce((acc, n) => acc + (n.position?.x || 0), 0) / nodesToCopy.length
+        const cy = nodesToCopy.reduce((acc, n) => acc + (n.position?.y || 0), 0) / nodesToCopy.length
+        const payload = {
+            v: 1,
+            kind: 'patlang/canvas-clipboard',
+            center: { x: cx, y: cy },
+            nodes: nodesToCopy,
+            edges: edgesToCopy,
+        }
+        clipboardRef.current = payload
+    }, [selectedNodes])
+
+    // PASTE from clipboard
+    const pasteClipboard = useCallback(() => {
+        const data = clipboardRef.current
+        if (!data) return
+        if (!data || data.kind !== 'patlang/canvas-clipboard' || !Array.isArray(data.nodes)) return
+
+        // anchor at viewport center
+        const anchor = getFlowCenter()
+        const sourceCenter = data.center || { x: 0, y: 0 }
+        const dx = anchor.x - sourceCenter.x
+        const dy = anchor.y - sourceCenter.y
+
+        // create id remap for nodes
+        const idMap = new Map()
+        const existingIds = new Set((nodesRef.current || []).map((n) => n.id))
+        function nextNodeId() {
+            let nid
+            do {
+                nid = `n_${idCounter.current++}`
+            } while (existingIds.has(nid))
+            existingIds.add(nid)
+            return nid
+        }
+        function nextEdgeId() {
+            return `e_${edgeIdCounter.current++}`
+        }
+
+        const clonedNodes = data.nodes.map((n) => {
+            const newId = nextNodeId()
+            idMap.set(n.id, newId)
+            return {
+                ...n,
+                id: newId,
+                selected: true,
+                position: {
+                    x: (n.position?.x || 0) + dx,
+                    y: (n.position?.y || 0) + dy,
+                },
+            }
+        })
+
+        // rebuild edges only between cloned nodes
+        const clonedEdges = (Array.isArray(data.edges) ? data.edges : [])
+            .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+            .map((e) => ({
+                ...e,
+                id: nextEdgeId(),
+                source: idMap.get(e.source),
+                target: idMap.get(e.target),
+            }))
+
+        // clear selection on existing nodes
+        pushHistory()
+        setNodes((prev) => prev.map((n) => ({ ...n, selected: false })).concat(clonedNodes))
+        if (clonedEdges.length > 0) {
+            setEdges((prev) => prev.concat(clonedEdges))
+        }
+    }, [getFlowCenter, pushHistory, setNodes, setEdges])
+    
+    // keyboard handler for undo/redo and copy/paste (placed after copy/paste callbacks)
+    useEffect(() => {
+        function onKeyDown(e) {
+            // ignore input fields to avoid hijacking typing
+            const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : ''
+            const isTyping = tag === 'input' || tag === 'textarea' || e.isComposing
+            if (isTyping) return
+            const key = (e.key || '').toLowerCase()
+            // COPY (in-app clipboard only)
+            if (key === 'c' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                copySelection()
+                return
+            }
+            // PASTE (from in-app clipboard)
+            if (key === 'v' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                pasteClipboard()
+                return
+            }
+            if (key === 'z' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+                e.preventDefault()
+                redo()
+                return
+            }
+            if ((key === 'y' && (e.ctrlKey || e.metaKey)) || (key === 'z' && (e.metaKey || e.ctrlKey))) {
+                e.preventDefault()
+                if (key === 'y' || e.shiftKey) {
+                    redo()
+                } else {
+                    undo()
+                }
+            }
+        }
+        window.addEventListener('keydown', onKeyDown)
+        return () => window.removeEventListener('keydown', onKeyDown)
+    }, [undo, redo, copySelection, pasteClipboard])
     
     const onNodesChange = useCallback(
-        (changes) => setNodes((nodesSnapshot) => applyNodeChanges(changes, nodesSnapshot)),
-        [setNodes],
+        (changes) => {
+            // Only record to history for meaningful changes excluding node moves.
+            // We explicitly ignore 'position' changes so moving nodes is NOT undoable/redoable.
+            const meaningful = (changes || []).some((c) => c.type !== 'select' && c.type !== 'dimensions' && c.type !== 'position')
+            if (meaningful) pushHistory()
+            setNodes((nodesSnapshot) => applyNodeChanges(changes, nodesSnapshot))
+        },
+        [setNodes, pushHistory],
     );
     const onEdgesChange = useCallback(
-        (changes) => setEdges((edgesSnapshot) => applyEdgeChanges(changes, edgesSnapshot)),
-        [setEdges],
+        (changes) => {
+            const meaningful = (changes || []).some((c) => c.type !== 'select')
+            if (meaningful) pushHistory()
+            setEdges((edgesSnapshot) => applyEdgeChanges(changes, edgesSnapshot))
+        },
+        [setEdges, pushHistory],
     );
     const onConnect = useCallback(
         (params) => {
@@ -76,6 +301,7 @@ export default function Canvas() {
                 return wire?.color || undefined
             })()
 
+            pushHistory()
             setEdges((edgesSnapshot) => addEdge({ ...params, style: { stroke: wireColor, strokeWidth: 3 } }, edgesSnapshot))
         },
         [nodes, findItemByType, edges, setEdges],
@@ -144,6 +370,7 @@ export default function Canvas() {
             },
         }
 
+        pushHistory()
         setNodes((nds) => nds.concat(newNode))
     }
 
@@ -206,25 +433,42 @@ export default function Canvas() {
             >
                     <Controls>
                         {(isMobile || isIOS) && (
-                            <ControlButton
-                                onClick={() => {
-                                    if (!(selectedNodes.length > 0 || selectedEdges.length > 0)) return
-                                    const nodeIds = (selectedNodes || []).map((n) => n.id)
-                                    const edgeIds = (selectedEdges || []).map((e) => e.id)
-                                    if (nodeIds.length > 0) {
-                                        setNodes((nds) => nds.filter((n) => !nodeIds.includes(n.id)))
-                                    }
-                                    if (edgeIds.length > 0) {
-                                        setEdges((eds) => eds.filter((e) => !edgeIds.includes(e.id)))
-                                    }
-                                    setSelectedNodes([])
-                                    setSelectedEdges([])
-                                }}
-                                title={(selectedNodes.length > 0 || selectedEdges.length > 0) ? 'Delete selected' : 'Select an item to delete'}
-                                disabled={!(selectedNodes.length > 0 || selectedEdges.length > 0)}
-                            >
-                                <DeleteIcon className="delete-button"/>
-                            </ControlButton>
+                            <>
+                                <ControlButton onClick={() => undo()} title="Undo">
+                                    <UndoIcon />
+                                </ControlButton>
+                                <ControlButton onClick={() => redo()} title="Redo">
+                                    <RedoIcon />
+                                </ControlButton>
+                                <ControlButton onClick={() => copySelection()} title="Copy selection">
+                                    <ContentCopyIcon />
+                                </ControlButton>
+                                <ControlButton onClick={() => pasteClipboard()} title="Paste">
+                                    <ContentPasteIcon />
+                                </ControlButton>
+                                <ControlButton
+                                    onClick={() => {
+                                        if (!(selectedNodes.length > 0 || selectedEdges.length > 0)) return
+                                        const nodeIds = (selectedNodes || []).map((n) => n.id)
+                                        const edgeIds = (selectedEdges || []).map((e) => e.id)
+                                        if (nodeIds.length > 0) {
+                                            pushHistory()
+                                            setNodes((nds) => nds.filter((n) => !nodeIds.includes(n.id)))
+                                        }
+                                        if (edgeIds.length > 0) {
+                                            // ensure we only push once if only edges are removed
+                                            if (nodeIds.length === 0) pushHistory()
+                                            setEdges((eds) => eds.filter((e) => !edgeIds.includes(e.id)))
+                                        }
+                                        setSelectedNodes([])
+                                        setSelectedEdges([])
+                                    }}
+                                    title={(selectedNodes.length > 0 || selectedEdges.length > 0) ? 'Delete selected' : 'Select an item to delete'}
+                                    disabled={!(selectedNodes.length > 0 || selectedEdges.length > 0)}
+                                >
+                                    <DeleteIcon className="delete-button"/>
+                                </ControlButton>
+                            </>
                         )}
                     </Controls>
                 <Background />

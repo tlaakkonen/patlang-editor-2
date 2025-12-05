@@ -2,12 +2,19 @@ import React from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Button from '@mui/material/Button'
+import TextField from '@mui/material/TextField'
 import Stack from '@mui/material/Stack'
 import Divider from '@mui/material/Divider'
 import { generatePython, generateNotebook } from '../../../utils/generateFiles'
 import { isMobile, isIOS } from 'react-device-detect'
 
 export default function FinishStep({ wizardState, sections }) {
+  const [baseName, setBaseName] = React.useState('generated')
+
+  function stripExt(name) {
+    if (!name) return ''
+    return String(name).replace(/\.[^/.]+$/, '')
+  }
   const downloadBlob = async (content, mimeType, filename) => {
     // Support modern file sharing (Web Share API) where available
     // and fall back to opening the blob URL on iOS Safari which
@@ -69,7 +76,8 @@ export default function FinishStep({ wizardState, sections }) {
     }
     if (res === null) { return }
     // res: { content, mimeType, filename }
-    await downloadBlob(res.content, res.mimeType, res.filename)
+    const base = stripExt(baseName) || (res && res.filename ? res.filename.replace(/\.[^/.]+$/, '') : 'generated')
+    await downloadBlob(res.content, res.mimeType, `${base}.py`)
   }
 
   const handleDownloadNotebook = async () => {
@@ -77,7 +85,8 @@ export default function FinishStep({ wizardState, sections }) {
     const sectionsCopy = sections ? JSON.parse(JSON.stringify(sections)) : []
     const res = generateNotebook(wizardState, sectionsCopy)
     if (res === null) { return }
-    await downloadBlob(res.content, res.mimeType, res.filename)
+    const base = stripExt(baseName) || (res && res.filename ? res.filename.replace(/\.[^/.]+$/, '') : 'generated')
+    await downloadBlob(res.content, res.mimeType, `${base}.ipynb`)
   }
 
   return (
@@ -88,15 +97,15 @@ export default function FinishStep({ wizardState, sections }) {
       </Typography>
 
       <Divider sx={{ my: 2 }} />
-
-      <Stack direction="row" spacing={2}>
-        <Button variant="contained" color="primary" onClick={handleDownloadNotebook}>
-          Download Notebook
-        </Button>
-        <Button variant="outlined" color="primary" onClick={handleDownloadPython}>
-          Download Python
-        </Button>
-      </Stack>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <TextField label="Filename" value={baseName} onChange={(e) => setBaseName(e.target.value)} size="small" sx={{ width: 260 }} />
+          <Button variant="contained" color="primary" onClick={handleDownloadNotebook}>
+            Download Notebook
+          </Button>
+          <Button variant="outlined" color="primary" onClick={handleDownloadPython}>
+            Download Python
+          </Button>
+        </Stack>
     </Box>
   )
 }

@@ -25,10 +25,22 @@ export async function createModelsForLearners(sections, wizardState) {
 		return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1
 	}
 
+	// Fallback stopGradient for environments where tf.stopGradient is unavailable.
+	// Creates a new constant tensor with the same value, breaking backprop links.
+	function stopGradientFallback(x) {
+		// Using dataSync() to materialize the value; acceptable here since it's
+		// only used when gradient gating is needed and tensors are small.
+		return tf.tidy(() => tf.tensor(x.dataSync(), x.shape, x.dtype))
+	}
+
 	for (const l of learners) {
 		const inputs = l.inputs || []
 		const outputs = l.outputs || []
-		const inputDim = inputs.reduce((acc, t) => acc + parseDim(wireDims[t]), 0)
+		// Sum declared input wire dimensions; if there are no inputs, allow a bias-only
+		// pathway by forcing an effective input dimension of 1. This lets zero-input
+		// learners operate with a constant input vector at execution time.
+		const rawInputDim = inputs.reduce((acc, t) => acc + parseDim(wireDims[t]), 0)
+		const inputDim = Math.max(1, rawInputDim)
 		const outputDim = outputs.reduce((acc, t) => acc + parseDim(wireDims[t]), 0)
 
 		const cfg = (wizardState?.learnerConfigs || {})[l.type] || {}
@@ -174,6 +186,16 @@ function resolveDataTensorsForNode(boxDef, batchX, batchY, wireDims, assignment,
 		}
 		return out
 	}
+	if (assignment === 'random-vector') {
+		if (outputs.length < 1) throw new Error('Random Vector assignment requires at least one output')
+		const bsz = batchY ? batchY.shape[0] : batchX.shape[0]
+		for (let i = 0; i < outputs.length; i++) {
+			const dim = parseDim(wireDims?.[outputs[i]])
+			const vec = tf.tidy(() => tf.randomNormal([bsz, dim]))
+			out.push(vec)
+		}
+		return out
+	}
 	throw new Error(`Unsupported data assignment '${assignment}' for data box ${boxDef?.type}`)
 }
 
@@ -216,6 +238,28 @@ export function buildDiagramExecutor(diagram, sections, wireDims, models) {
 	}
 	if (topo.length !== nodes.length) throw new Error('Diagram has cycles or disconnected nodes')
 
+	// Precompute for each output node input: whether source is data, and its upstream box type
+	const outputsIsDataSource = {}
+	const outputsUpstreamBoxType = {}
+	for (const n of nodes) {
+		const node = n
+		const boxType = node?.data?.type
+		const boxDef = boxByType.get(boxType) || {}
+		if (boxDef?.kind === 'output') {
+			const inEdges = incoming.get(node.id) || []
+			for (const e of inEdges) {
+				const idx = parseHandleIndex(e.targetHandle)
+				const srcNode = nodeById.get(e.source)
+				const srcType = srcNode?.data?.type
+				const srcDef = boxByType.get(srcType) || {}
+				if (!outputsIsDataSource[boxType]) outputsIsDataSource[boxType] = {}
+				outputsIsDataSource[boxType][idx] = (srcDef?.kind === 'data')
+				if (!outputsUpstreamBoxType[boxType]) outputsUpstreamBoxType[boxType] = {}
+				outputsUpstreamBoxType[boxType][idx] = srcType
+			}
+		}
+	}
+
 	// Executor function uses per-equation learner gating
 	return function execute(batchX, batchY, learnersAllowedSet) {
 		// For each node, compute its outputs as array per output handle index
@@ -252,15 +296,24 @@ export function buildDiagramExecutor(diagram, sections, wireDims, models) {
 				const outs = resolveDataTensorsForNode(boxDef, batchX, batchY, wireDims, assignment, !!execute.__useProvidedRandom)
 				produced.set(id, outs)
 					} else if (kind === 'learner') {
-				const x = concatInputs(orderedInputs)
+				// Allow zero-input learners by feeding a constant bias input of shape [B,1]
+				let x
+				if (!orderedInputs || orderedInputs.length === 0) {
+					const bsz = batchX ? batchX.shape[0] : (batchY ? batchY.shape[0] : 1)
+					x = tf.ones([bsz, 1])
+				} else {
+					x = concatInputs(orderedInputs)
+				}
 				const model = models[boxType]
 				if (!model) throw new Error(`Model not found for learner ${boxType}`)
 						let y = model.apply(x, { training: true })
 						const allowed = !learnersAllowedSet || (learnersAllowedSet.size === 0) || learnersAllowedSet.has(boxType)
 						if (!allowed) {
-					// gradient gating for this equation
-					y = tf.stopGradient(y)
-				}
+							// gradient gating for this equation: detach y from the graph
+							// Prefer tf.stopGradient if available; otherwise fall back to a constant tensor
+							const hasStop = typeof tf.stopGradient === 'function'
+							y = hasStop ? tf.stopGradient(y) : tf.tidy(() => tf.tensor(y.dataSync(), y.shape, y.dtype))
+						}
 				const outs = splitByWireDims(y, outputsTypes, wireDims)
 				produced.set(id, outs)
 			} else if (kind === 'output') {
@@ -286,11 +339,15 @@ export function buildDiagramExecutor(diagram, sections, wireDims, models) {
 
 		return outputsForLoss
 	}
+
+	// Expose the precomputed data-source map for loss selection logic
+	execute.__outputsIsDataSource = outputsIsDataSource
+	execute.__outputsUpstreamBoxType = outputsUpstreamBoxType
 }
 
 // Compute one equation’s weighted loss and return { total, perIndex } where
 // perIndex is a map of nodeType->index->scalar tensor.
-function computeEquationLoss(lhsMap, rhsMap, eqLossSpec, weight) {
+function computeEquationLoss(lhsMap, rhsMap, rhsIsProbMap, eqLossSpec, weight) {
 	let eqLoss = tf.scalar(0)
 	const perParts = {}
 	const w = Number(weight ?? 1)
@@ -304,12 +361,23 @@ function computeEquationLoss(lhsMap, rhsMap, eqLossSpec, weight) {
 			if (!lhs || !rhs) throw new Error(`Missing tensors for ${nodeType}[${idx}] in equation loss`)
 			let term
 			if (lossType === 'CE') {
-				// softmax cross entropy: labels one-hot in rhs, logits in lhs
-				const per = tf.losses.softmaxCrossEntropy(rhs, lhs)
-				term = tf.mean(per)
+				// Cross-entropy: lhs are logits. For RHS, use probabilities if the
+				// signal flows directly from a data node; otherwise treat RHS as logits.
+				term = tf.tidy(() => {
+					const rhsIsProb = !!(rhsIsProbMap?.[nodeType]?.[idx])
+					const labels = rhsIsProb ? rhs : tf.softmax(rhs)
+					const per = tf.losses.softmaxCrossEntropy(labels, lhs)
+					return tf.mean(per)
+				})
 			} else if (lossType === 'BCE') {
-				const per = tf.losses.sigmoidCrossEntropy(rhs, lhs)
-				term = tf.mean(per)
+				// Binary cross-entropy: lhs are logits. Use probabilities for RHS
+				// only when flowing directly from a data node; otherwise treat as logits.
+				term = tf.tidy(() => {
+					const rhsIsProb = !!(rhsIsProbMap?.[nodeType]?.[idx])
+					const labels = rhsIsProb ? rhs : tf.sigmoid(rhs)
+					const per = tf.losses.sigmoidCrossEntropy(labels, lhs)
+					return tf.mean(per)
+				})
 			} else if (lossType === 'SSIM') {
 				// Structural Similarity for images (approximation using avgPool):
 				// reshape to [B,28,28,1], map preds to [0,1], then compute SSIM and return 1-mean(SSIM)
@@ -410,10 +478,22 @@ export async function trainOneEpoch({
 			const allowed = new Set((wizardState?.outputLearners?.[eq.type]) || [])
 			const lhsMap = lhsExec(batchX, batchY, allowed)
 			const rhsMap = rhsExec(batchX, batchY, allowed)
+			// Determine probability nature of RHS based on upstream data box assignments
+			const rhsIsProbMap = {}
+			const upstream = rhsExec.__outputsUpstreamBoxType || {}
+			for (const nodeType of Object.keys(upstream)) {
+				rhsIsProbMap[nodeType] = {}
+				for (const idx of Object.keys(upstream[nodeType])) {
+					const srcBoxType = upstream[nodeType][idx]
+					const assign = (wizardState?.dataAssignments || {})[srcBoxType]
+					// Probabilities only when labels are provided by data: 'labelled' or 'random'
+					rhsIsProbMap[nodeType][idx] = (assign === 'labelled' || assign === 'random')
+				}
+			}
 			const eqLossSpec = (wizardState?.outputLosses?.[eq.type]) || {}
 			const weight = (wizardState?.outputWeights?.[eq.type]) ?? 1
-			// translate lhs/rhs maps from nodeType->{idx:tensor} to the format our compute expects
-			const { eqLoss } = computeEquationLoss(lhsMap, rhsMap, eqLossSpec, weight)
+			// translate lhs/rhs maps and compute using rhs source information
+			const { eqLoss } = computeEquationLoss(lhsMap, rhsMap, rhsIsProbMap, eqLossSpec, weight)
 			totalLoss = tf.add(totalLoss, eqLoss)
 			perEqScalars[eq.type] = eqLoss
 		}
@@ -526,9 +606,20 @@ export async function evaluateTestLoss({
 			const allowed = new Set((wizardState?.outputLearners?.[eq.type]) || [])
 			const lhsMap = lhsExec(batchX, batchY, allowed)
 			const rhsMap = rhsExec(batchX, batchY, allowed)
+			// Determine probability nature of RHS based on upstream data box assignments
+			const rhsIsProbMap = {}
+			const upstream = rhsExec.__outputsUpstreamBoxType || {}
+			for (const nodeType of Object.keys(upstream)) {
+				rhsIsProbMap[nodeType] = {}
+				for (const idx of Object.keys(upstream[nodeType])) {
+					const srcBoxType = upstream[nodeType][idx]
+					const assign = (wizardState?.dataAssignments || {})[srcBoxType]
+					rhsIsProbMap[nodeType][idx] = (assign === 'labelled' || assign === 'random')
+				}
+			}
 			const eqLossSpec = (wizardState?.outputLosses?.[eq.type]) || {}
 			const weight = (wizardState?.outputWeights?.[eq.type]) ?? 1
-			const { eqLoss } = computeEquationLoss(lhsMap, rhsMap, eqLossSpec, weight)
+			const { eqLoss } = computeEquationLoss(lhsMap, rhsMap, rhsIsProbMap, eqLossSpec, weight)
 			totalLoss = tf.add(totalLoss, eqLoss)
 			perEqScalars[eq.type] = eqLoss
 		}

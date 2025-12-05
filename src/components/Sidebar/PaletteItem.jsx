@@ -9,8 +9,9 @@ import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import { usePalette } from '../../state/PaletteContext'
 
-export default function PaletteItem({ item, sectionKey, onEdit }) {
+export default function PaletteItem({ item, sectionKey, index, onEdit }) {
   const { setSections, nodes, edges, setNodes, setEdges } = usePalette()
+  const [isDragOver, setIsDragOver] = React.useState(false)
   const isOpened = sectionKey === 'diagrams' && !!item.opened
 
   function onDelete(e) {
@@ -31,8 +32,52 @@ export default function PaletteItem({ item, sectionKey, onEdit }) {
   
   function onDragStart(e) {
     // set a custom mime type so Canvas can read the node type
+    // used by Canvas when dragging a Box onto the canvas
     e.dataTransfer.setData('application/x-node-type', item.type)
-    e.dataTransfer.effectAllowed = 'copy'
+    // used for reordering items inside the palette: include section key and index
+    try {
+      e.dataTransfer.setData('application/x-palette-item', JSON.stringify({ sectionKey, index }))
+    } catch (err) {
+      // some browsers may throw when setting non-standard types, ignore
+    }
+    e.dataTransfer.effectAllowed = 'copyMove'
+  }
+  function onDragOver(e) {
+    // allow drop within the palette
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setIsDragOver(true)
+  }
+  function onDragLeave() {
+    setIsDragOver(false)
+  }
+  function onDrop(e) {
+    e.preventDefault()
+    setIsDragOver(false)
+    // attempt to parse the palette-item payload
+    const raw = e.dataTransfer.getData('application/x-palette-item')
+    if (!raw) return
+    let payload = null
+    try {
+      payload = JSON.parse(raw)
+    } catch (err) {
+      return
+    }
+    // only allow reordering within the same section
+    if (!payload || payload.sectionKey !== sectionKey) return
+    const from = payload.index
+    const to = index
+    if (from === undefined || to === undefined || from === to) return
+    setSections((prev) =>
+      prev.map((s) => {
+        if (s.key !== sectionKey) return s
+        const items = Array.isArray(s.items) ? [...s.items] : []
+        if (from < 0 || from >= items.length || to < 0 || to > items.length) return s
+        const [moved] = items.splice(from, 1)
+        items.splice(to, 0, moved)
+        return { ...s, items }
+      }),
+    )
   }
   function handleDoubleClick(e) {
     // prevent double-click from starting a drag or selecting the item
@@ -64,11 +109,14 @@ export default function PaletteItem({ item, sectionKey, onEdit }) {
     <ListItem
       draggable
       onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       onDoubleClick={handleDoubleClick}
       sx={{
         borderRadius: 1,
-  bgcolor: isOpened ? 'action.selected' : 'inherit',
-  border: isOpened ? '1px solid rgba(25,118,210,0.24)' : 'none',
+        bgcolor: isDragOver ? 'action.hover' : isOpened ? 'action.selected' : 'inherit',
+        border: isOpened ? '1px solid rgba(25,118,210,0.24)' : 'none',
       }}
       secondaryAction={
       <>

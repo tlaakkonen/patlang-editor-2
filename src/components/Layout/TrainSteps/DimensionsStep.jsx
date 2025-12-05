@@ -74,6 +74,7 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
       const outputs = b.outputs || []
       let okLabelled = false
       let okRandom = false
+      let okRandomVector = false
       if (mnistAssigned) {
         // labelled: exactly two output wires, one maps to MNIST images and one to MNIST labels
         if (outputs.length === 2) {
@@ -87,7 +88,17 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
           if ((value?.[only] ?? '') === MNIST_LABEL_DIM) okRandom = true
         }
       }
-      map[b.type] = { labelled: okLabelled, random: okRandom }
+      // Random Vector: allowed when the data box outputs exist and ALL are custom dimensions
+      if (outputs.length >= 1) {
+        const allCustom = outputs.every((t) => {
+          const sel = selects?.[t]
+          if (sel) return sel === 'custom'
+          const dim = (value?.[t] ?? '')
+          return dim !== MNIST_IMAGE_DIM && dim !== MNIST_LABEL_DIM && dim !== ''
+        })
+        if (allCustom) okRandomVector = true
+      }
+  map[b.type] = { labelled: okLabelled, random: okRandom, 'random-vector': okRandomVector }
     }
     return map
   }, [dataBoxes, value, selectCounts])
@@ -109,8 +120,9 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
 
   // report aggregate validity whenever inputs change or dialog opens
   React.useEffect(() => {
-    const dimsValid = Object.values(wireErrors).every((e) => !e)
-    const mnistValid = selectCounts.images === 1 && selectCounts.labels === 1
+  const dimsValid = Object.values(wireErrors).every((e) => !e)
+  const requiresMnistLocal = Object.values(dataAssignments || {}).some((v) => v === 'labelled' || v === 'random')
+  const mnistValid = !requiresMnistLocal || (selectCounts.images === 1 && selectCounts.labels === 1)
     const dataValid = (dataBoxes || []).every((b) => {
       const v = dataAssignments?.[b.type]
       return typeof v === 'string' && v.length > 0
@@ -125,7 +137,7 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
         : (cur === MNIST_IMAGE_DIM ? 'mnist-images' : (cur === MNIST_LABEL_DIM ? 'mnist-labels' : 'custom'))
       return sel === ''
     })
-    onValidityChange?.(dimsValid && mnistValid && dataValid && !anyNone)
+  onValidityChange?.(dimsValid && mnistValid && dataValid && !anyNone)
   }, [wireErrors, selectCounts, dataBoxes, dataAssignments, selects, value, wires, onValidityChange])
 
   const handleWireDimChange = (type, raw) => {
@@ -168,7 +180,10 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
     onDataAssignmentsChange?.(next)
   }
 
-  const mnistValidRender = (selectCounts.images === 1 && selectCounts.labels === 1)
+  const requiresMnist = React.useMemo(() => (
+    Object.values(dataAssignments || {}).some((v) => v === 'labelled' || v === 'random')
+  ), [dataAssignments])
+  const mnistValidRender = (!requiresMnist) || (selectCounts.images === 1 && selectCounts.labels === 1)
   const dataValidRender = (dataBoxes || []).every((b) => {
     const v = dataAssignments?.[b.type]
     return typeof v === 'string' && v.length > 0
@@ -304,6 +319,7 @@ export default function DimensionsStep({ wires, value = {}, selects = {}, oneHot
                           <MenuItem value=""><em>None</em></MenuItem>
                           <MenuItem value="labelled" disabled={!allowedMap[b.type]?.labelled}>Labelled Data</MenuItem>
                           <MenuItem value="random" disabled={!allowedMap[b.type]?.random}>Random Labels</MenuItem>
+                          <MenuItem value="random-vector" disabled={!allowedMap[b.type]?.['random-vector']}>Random Vector</MenuItem>
                       </Select>
                     </FormControl>
                   </Box>

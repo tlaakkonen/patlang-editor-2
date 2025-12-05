@@ -13,6 +13,7 @@ import FormControl from '@mui/material/FormControl'
 import InputLabel from '@mui/material/InputLabel'
 import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
+import TextField from '@mui/material/TextField'
 import Divider from '@mui/material/Divider'
 import Typography from '@mui/material/Typography'
 import LinearProgress from '@mui/material/LinearProgress'
@@ -83,10 +84,14 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
   const [epochBatch, setEpochBatch] = useState(0)
   const [epochTotalBatches, setEpochTotalBatches] = useState(0)
   const [epochProgress, setEpochProgress] = useState(0)
+  const [batchSize, setBatchSize] = useState(128)
+  const [learningRate, setLearningRate] = useState(0.001)
   const initialEvalDoneRef = useRef(false)
   const pendingDisposeRef = useRef(false)
   const trainingLoopActiveRef = useRef(false)
   const latestConfigRef = useRef({ sections, wizardState, equations: [] })
+  const batchSizeRef = useRef(batchSize)
+  const learningRateRef = useRef(learningRate)
 
   // Sync external models into local state when provided (persist across steps)
   useEffect(() => {
@@ -102,7 +107,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
   // ---------------- Visualization state ----------------
   const [vizRefreshing, setVizRefreshing] = useState(false)
   const [vizError, setVizError] = useState(null)
-  const [vizInputs, setVizInputs] = useState({ labelled: null, random: null })
+  const [vizInputs, setVizInputs] = useState({ labelled: null, random: null, randomVector: false })
   const [vizOutputs, setVizOutputs] = useState({}) // { [outputNodeType]: { [inputIdx]: { kind:'image'|'labels'|'unsupported', samples: Float32Array[] } } }
   const refreshVizRef = useRef(null)
   const vizRunningRef = useRef(false)
@@ -220,6 +225,19 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
     latestConfigRef.current = { sections, wizardState, equations }
   }, [sections, wizardState, equations])
 
+  // Keep refs in sync so long-running training loop reads latest values
+  useEffect(() => { batchSizeRef.current = batchSize }, [batchSize])
+  useEffect(() => { learningRateRef.current = learningRate }, [learningRate])
+  // If the learning rate changes while an optimizer exists, recreate it so the new LR takes effect.
+  useEffect(() => {
+    if (!optimizerRef.current) return
+    try {
+      // dispose if available
+      if (typeof optimizerRef.current.dispose === 'function') optimizerRef.current.dispose()
+    } catch (e) { /* ignore */ }
+    optimizerRef.current = tf.train.adam(learningRateRef.current || 0.001)
+  }, [learningRate])
+
   // Training loop effect: when running, call trainOneEpoch repeatedly and update charts.
   useEffect(() => {
     runningRef.current = running
@@ -231,11 +249,11 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
     const runLoop = async () => {
       trainingLoopActiveRef.current = true
       try {
-        if (!optimizerRef.current) optimizerRef.current = tf.train.adam(0.001)
+  if (!optimizerRef.current) optimizerRef.current = tf.train.adam(learningRateRef.current || 0.001)
         if (!initialEvalDoneRef.current) {
-          try {
+            try {
             const { sections: sec0, wizardState: wiz0, equations: eq0 } = latestConfigRef.current
-            const { testLoss, perEquationTestLoss } = await evaluateTestLoss({ models, sections: sec0, wizardState: wiz0, batchSize: 128 })
+            const { testLoss, perEquationTestLoss } = await evaluateTestLoss({ models, sections: sec0, wizardState: wiz0, batchSize: batchSizeRef.current || 128 })
             setLossHistory((h) => [...h, Number.isFinite(testLoss) ? testLoss : 0].slice(-200))
             setEqHistories((prev) => {
               const next = { ...prev }
@@ -251,13 +269,13 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
             console.error('Initial evaluation failed', e)
             // If models may have been disposed, recreate once and retry
             const msg = String(e?.message || e)
-            if (/disposed/i.test(msg)) {
+                if (/disposed/i.test(msg)) {
               try {
                 const created = await createModelsForLearners(sections, wizardState)
                 setModels(created)
                 try { onModelsChange && onModelsChange(created) } catch {}
-                const { sections: sec0b, wizardState: wiz0b, equations: eq0b } = latestConfigRef.current
-                const { testLoss, perEquationTestLoss } = await evaluateTestLoss({ models: created, sections: sec0b, wizardState: wiz0b, batchSize: 128 })
+                    const { sections: sec0b, wizardState: wiz0b, equations: eq0b } = latestConfigRef.current
+                    const { testLoss, perEquationTestLoss } = await evaluateTestLoss({ models: created, sections: sec0b, wizardState: wiz0b, batchSize: batchSizeRef.current || 128 })
                 setLossHistory((h) => [...h, Number.isFinite(testLoss) ? testLoss : 0].slice(-200))
                 setEqHistories((prev) => {
                   const next = { ...prev }
@@ -288,7 +306,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
             sections: sec,
             wizardState: wiz,
             optimizer: optimizerRef.current,
-            batchSize: 128,
+            batchSize: batchSizeRef.current || 128,
             shuffle: true,
             onBatchEnd: ({ trainLoss, perEquationTrainLoss, batch, totalBatches }) => {
               if (!runningRef.current) return
@@ -323,7 +341,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
             },
           })
           try {
-            const r = await runEpoch(models)
+                const r = await runEpoch(models)
             testLoss = r.testLoss; perEquationTestLoss = r.perEquationTestLoss
           } catch (e) {
             const msg = String(e?.message || e)
@@ -337,7 +355,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
                   sections: sec,
                   wizardState: wiz,
                   optimizer: optimizerRef.current,
-                  batchSize: 128,
+                  batchSize: batchSizeRef.current || 128,
                   shuffle: true,
                   onBatchEnd: ({ trainLoss, perEquationTrainLoss, batch, totalBatches }) => {
                     if (!runningRef.current) return
@@ -480,7 +498,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
         console.error('Failed to create models', e)
       }
     }
-    if (!optimizerRef.current) optimizerRef.current = tf.train.adam()
+    if (!optimizerRef.current) optimizerRef.current = tf.train.adam(learningRateRef.current || learningRate || 0.001)
     setRunning(true)
   }
   const stop = () => setRunning(false)
@@ -656,12 +674,14 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
       const nodeTypesInDiagram = new Set((diagram?.nodes || []).map((n) => n.data?.type))
       let hasLabelled = false
       let hasRandom = false
+      let hasRandomVector = false
       for (const t of nodeTypesInDiagram) {
         const def = boxByType.get(t)
         if (def?.kind === 'data') {
           const a = wizardState?.dataAssignments?.[t]
           if (a === 'labelled') hasLabelled = true
           if (a === 'random') hasRandom = true
+          if (a === 'random-vector') hasRandomVector = true
         }
       }
 
@@ -694,7 +714,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
         })(),
       } : null
 
-      const randomInputs = hasRandom ? { labels: randomLabelsArray } : null
+  const randomInputs = hasRandom ? { labels: randomLabelsArray } : null
 
       // Run forward. For simplicity, pass batchY according to assignment:
       // - labelled paths will use 'by'; random paths will use 'randomLabelsTensor'
@@ -736,7 +756,7 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
         }
       }
 
-      setVizInputs({ labelled: labelledInputs, random: randomInputs })
+  setVizInputs({ labelled: labelledInputs, random: randomInputs, randomVector: hasRandomVector })
       setVizOutputs(result)
 
   // Dispose tensors
@@ -780,24 +800,52 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
             {mnistReady ? 'MNIST downloaded' : (mnistDownloading ? 'Downloading…' : 'Download MNIST')}
           </Button>
         </Box>
-
-        <Typography variant="body2" sx={{ ml: 2, color: 'text.primary' }}>Diagram to visualize:</Typography>
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel id="train-diagram-select-label">Visualize</InputLabel>
-          <Select
-            labelId="train-diagram-select-label"
-            id="train-diagram-select"
-            value={selectedDiagram}
-            label="Visualize"
-            onChange={(e) => setSelectedDiagram(e.target.value)}
-            disabled={false}
-          >
-            <MenuItem value="">None</MenuItem>
-            {eligibleDiagrams.map((d) => (
-              <MenuItem key={d.type} value={d.type}>{d.label || d.type}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <Box sx={{ display: 'flex', flex: 1, alignItems: 'center' }}>
+          <Typography variant="body2" sx={{ ml: 2, mr: 2, color: 'text.primary' }}>Visualization:</Typography>
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <InputLabel id="train-diagram-select-label">Visualize</InputLabel>
+            <Select
+              labelId="train-diagram-select-label"
+              id="train-diagram-select"
+              value={selectedDiagram}
+              label="Visualize"
+              onChange={(e) => setSelectedDiagram(e.target.value)}
+              disabled={false}
+            >
+              <MenuItem value="">None</MenuItem>
+              {eligibleDiagrams.map((d) => (
+                <MenuItem key={d.type} value={d.type}>{d.label || d.type}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}/>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2 }}>
+          <TextField
+            label="Batch"
+            size="small"
+            type="number"
+            inputProps={{ min: 1, step: 1 }}
+            sx={{ width: 110 }}
+            value={batchSize}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              if (Number.isFinite(v) && v > 0) setBatchSize(Math.max(1, Math.floor(v)))
+            }}
+          />
+          <TextField
+            label="LR"
+            size="small"
+            type="number"
+            inputProps={{ min: 1e-8, step: '0.0001' }}
+            sx={{ width: 120 }}
+            value={learningRate}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              if (Number.isFinite(v) && v > 0) setLearningRate(v)
+            }}
+          />
+        </Box>
       </Box>
 
       <Divider sx={{ mb: 2 }} />
@@ -941,7 +989,12 @@ export default function TrainStep({ wizardState, sections, mnistReady = false, m
                   </Box>
                 </Box>
               )}
-              {!vizInputs.labelled && !vizInputs.random && (
+              {vizInputs.randomVector && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  Random vector input present (not displayed).
+                </Typography>
+              )}
+              {!vizInputs.labelled && !vizInputs.random && !vizInputs.randomVector && (
                 <Typography variant="caption" color="text.secondary">No data inputs for this diagram.</Typography>
               )}
             </Box>

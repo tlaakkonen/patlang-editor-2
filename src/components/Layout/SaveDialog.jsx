@@ -4,12 +4,14 @@ import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
 import TextField from '@mui/material/TextField'
+import Box from '@mui/material/Box'
 import IconButton from '@mui/material/IconButton'
 import Button from '@mui/material/Button'
 import CloseIcon from '@mui/icons-material/Close'
 
 export default function SaveDialog({ open, onClose, sections, nodes, edges }) {
   const [jsonText, setJsonText] = React.useState('')
+  const [fileName, setFileName] = React.useState('patlang-export')
 
   React.useEffect(() => {
     if (!open) return
@@ -30,7 +32,9 @@ export default function SaveDialog({ open, onClose, sections, nodes, edges }) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'patlang-export.json'
+    // ensure we don't include an extension in the text field; append .json
+    const base = (fileName || 'patlang-export').replace(/\.[^/.]+$/, '')
+    a.download = `${base}.json`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -62,6 +66,14 @@ export default function SaveDialog({ open, onClose, sections, nodes, edges }) {
       </DialogContent>
       <DialogActions>
         <Button onClick={handleCopy}>Copy to clipboard</Button>
+        <Box sx={{ flex: 1 }} />
+        <TextField
+          label="Filename"
+          value={fileName}
+          onChange={(e) => setFileName(e.target.value)}
+          size="small"
+          sx={{ mr: 1, width: 220 }}
+        />
         <Button onClick={handleDownload} variant="outlined">Download</Button>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
