@@ -9,7 +9,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import { usePalette } from '../../state/PaletteContext'
 
-export default function PaletteItem({ item, sectionKey, index, onEdit }) {
+export default function PaletteItem({ item, sectionKey, index, folderId, onEdit }) {
   const { setSections, nodes, edges, setNodes, setEdges } = usePalette()
   const [isDragOver, setIsDragOver] = React.useState(false)
   const isOpened = sectionKey === 'diagrams' && !!item.opened
@@ -36,7 +36,7 @@ export default function PaletteItem({ item, sectionKey, index, onEdit }) {
     e.dataTransfer.setData('application/x-node-type', item.type)
     // used for reordering items inside the palette: include section key and index
     try {
-      e.dataTransfer.setData('application/x-palette-item', JSON.stringify({ sectionKey, index }))
+      e.dataTransfer.setData('application/x-palette-item', JSON.stringify({ sectionKey, fromFolderId: folderId, index, itemType: 'item' }))
     } catch (err) {
       // some browsers may throw when setting non-standard types, ignore
     }
@@ -63,21 +63,45 @@ export default function PaletteItem({ item, sectionKey, index, onEdit }) {
     } catch (err) {
       return
     }
-    // only allow reordering within the same section
     if (!payload || payload.sectionKey !== sectionKey) return
-    const from = payload.index
-    const to = index
-    if (from === undefined || to === undefined || from === to) return
-    setSections((prev) =>
-      prev.map((s) => {
-        if (s.key !== sectionKey) return s
-        const items = Array.isArray(s.items) ? [...s.items] : []
-        if (from < 0 || from >= items.length || to < 0 || to > items.length) return s
-        const [moved] = items.splice(from, 1)
-        items.splice(to, 0, moved)
-        return { ...s, items }
-      }),
-    )
+    if (payload.itemType !== 'item') return
+    const fromFolderId = payload.fromFolderId
+    const fromIndex = payload.index
+    const toFolderId = folderId
+    const toIndex = index
+
+    function moveOrReorder(section) {
+      const all = Array.isArray(section.items) ? [...section.items] : []
+      const validFolderIds = new Set((section.folders || []).map((f) => f.id))
+      const norm = (fid) => (fid && validFolderIds.has(fid) ? fid : undefined)
+      const fromF = norm(fromFolderId)
+      const toF = norm(toFolderId)
+
+      const grouped = all.map((it, idx) => ({ it, idx, gid: norm(it.folderId) }))
+      const fromGroup = grouped.filter((e) => e.gid === fromF)
+      if (fromIndex < 0 || fromIndex >= fromGroup.length) return section
+      const moving = fromGroup[fromIndex]
+
+      const without = all.filter((_, i) => i !== moving.idx)
+      const regroup = without.map((it, idx) => ({ it, idx, gid: norm(it.folderId) }))
+      const destGroup = regroup.filter((e) => e.gid === toF)
+      const tIndex = Math.max(0, Math.min(toIndex ?? destGroup.length, destGroup.length))
+
+      let insertAt
+      if (destGroup.length === 0) {
+        insertAt = without.length
+      } else if (tIndex >= destGroup.length) {
+        insertAt = destGroup[destGroup.length - 1].idx + 1
+      } else {
+        insertAt = destGroup[tIndex].idx
+      }
+
+      const movedItem = { ...moving.it, folderId: toF }
+      const result = [...without.slice(0, insertAt), movedItem, ...without.slice(insertAt)]
+      return { ...section, items: result }
+    }
+
+    setSections((prev) => prev.map((s) => (s.key === sectionKey ? moveOrReorder(s) : s)))
   }
   function handleDoubleClick(e) {
     // prevent double-click from starting a drag or selecting the item
@@ -115,29 +139,38 @@ export default function PaletteItem({ item, sectionKey, index, onEdit }) {
       onDoubleClick={handleDoubleClick}
       sx={{
         borderRadius: 1,
-        bgcolor: isDragOver ? 'action.hover' : isOpened ? 'action.selected' : 'inherit',
+        bgcolor: isDragOver || isOpened ? 'action.selected' : 'inherit',
         border: isOpened ? '1px solid rgba(25,118,210,0.24)' : 'none',
       }}
       secondaryAction={
-      <>
-        <IconButton edge="end" aria-label="edit" onClick={handleEdit} sx={{ mr: 1 }}>
-          <EditIcon fontSize="small" />
-        </IconButton>
-        {isOpened ? (
-          <Tooltip title="Cannot delete the open diagram">
-            <span>
-              <IconButton edge="end" aria-label="delete" disabled>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        ) : (
-          <IconButton edge="end" aria-label="delete" onClick={onDelete}>
-            <DeleteIcon fontSize="small" />
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            bgcolor: isDragOver || isOpened ? 'none' : 'background.paper',
+            px: 0.5,
+            py: 0.25,
+            borderRadius: 1,
+          }}
+        >
+          <IconButton edge="end" aria-label="edit" onClick={handleEdit} sx={{ mr: 1 }}>
+            <EditIcon fontSize="small" />
           </IconButton>
-        )}
-      </>
-    }>
+          {isOpened ? (
+            <Tooltip title="Cannot delete the open diagram">
+              <span>
+                <IconButton edge="end" aria-label="delete" disabled>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : (
+            <IconButton edge="end" aria-label="delete" onClick={onDelete}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Box>
+      }>
       {/* color swatch on the left; only for wires or boxes */}
       {(sectionKey === 'wires' || sectionKey === 'boxes') && (
         <Box

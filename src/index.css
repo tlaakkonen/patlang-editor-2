@@ -213,3 +213,29 @@ input, textarea, select {
 	color: var(--danger) !important;
 }
 
+/* Make selected edges stand out more */
+.react-flow__edge-path {
+	stroke-linecap: round;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+	stroke-width: 3px !important; /* override inline style to thicken */
+	stroke-dasharray: 6 3; /* small dashes with clear gaps */
+	stroke-linecap: butt; /* avoid rounded caps overlapping gaps */
+	/* subtle halo to improve contrast on busy backgrounds */
+	filter: drop-shadow(0 0 0 1.5px var(--panel-bg));
+}
+
+/* Sidebar palette: truncate long section titles and item labels instead of wrapping */
+nav .MuiListItem-root,
+nav .MuiListItemButton-root,
+nav .MuiListItemText-root {
+  min-width: 0; /* allow flex children to shrink */
+}
+nav .MuiListItemText-primary,
+nav .MuiListItemText-secondary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block; /* ensure ellipsis applies */
+}
+

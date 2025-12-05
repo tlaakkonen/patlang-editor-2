@@ -14,7 +14,7 @@ export default function Sidebar({ sections: propSections }) {
       <List disablePadding>
         {sections.map((s, idx) => (
           <Box key={s.title} sx={{ pb: idx === sections.length - 1 ? 0 : 2 }}>
-            <PaletteSection title={s.title} items={s.items} sectionKey={s.key} />
+            <PaletteSection title={s.title} items={s.items} folders={s.folders} sectionKey={s.key} />
             {idx < sections.length - 1 && <Divider sx={{ mt: 2 }} />}
           </Box>
         ))}
