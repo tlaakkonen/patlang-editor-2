@@ -133,7 +133,7 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
                               const prev = value[b.type] || {}
                               const nextCfg = { ...prev, arch }
                             if (arch === 'MLP') {
-                              if (!nextCfg.mlp) nextCfg.mlp = { hiddenLayers: '1', hiddenUnits: '64', activation: 'relu' }
+                              if (!nextCfg.mlp) nextCfg.mlp = { hiddenLayers: '1', hiddenUnits: '64', activation: 'relu', outputActivation: 'none' }
                               if (nextCfg.transformer) delete nextCfg.transformer
                             } else if (arch === 'Transformer') {
                               if (!nextCfg.transformer) nextCfg.transformer = { numLayers: '6', dModel: '512', numHeads: '8', dff: '2048', dropout: '0.1' }
@@ -201,6 +201,23 @@ export default function ArchitectureStep({ learners, value = {}, onChange, onVal
                           >
                             <MenuItem value="relu">ReLU</MenuItem>
                             <MenuItem value="tanh">Tanh</MenuItem>
+                            <MenuItem value="sigmoid">Sigmoid</MenuItem>
+                          </TextField>
+
+                          <TextField
+                            select
+                            size="small"
+                            label="Output normalization"
+                            value={value[b.type]?.mlp?.outputActivation ?? 'none'}
+                            onChange={(e) => {
+                              const updated = { ...value, [b.type]: { ...(value[b.type] || {}), mlp: { ...(value[b.type]?.mlp || {}), outputActivation: e.target.value } } }
+                              onChange?.(updated)
+                            }}
+                            sx={{ width: 200 }}
+                            helperText={' '}
+                          >
+                            <MenuItem value="none">None (logits)</MenuItem>
+                            <MenuItem value="softmax">Softmax</MenuItem>
                             <MenuItem value="sigmoid">Sigmoid</MenuItem>
                           </TextField>
                         </Box>

@@ -51,11 +51,25 @@ export async function createModelsForLearners(sections, wizardState) {
 		if (arch === 'Linear') {
 			model.add(tf.layers.dense({ inputShape: [inputDim], units: outputDim }))
 		} else if (arch === 'MLP' || arch === 'mlp') {
-			const hidden = cfg.hiddenUnits || [64, 32]
+			const mlp = cfg.mlp || {}
+			const hl = Number.parseInt(mlp.hiddenLayers, 10)
+			const hu = Number.parseInt(mlp.hiddenUnits, 10)
+			const hiddenLayers = Number.isFinite(hl) && hl > 0 ? hl : 1
+			const hiddenUnits = Number.isFinite(hu) && hu > 0 ? hu : 64
+			const hiddenActivation = mlp.activation || 'relu'
 			// first hidden layer needs inputShape
-			model.add(tf.layers.dense({ inputShape: [inputDim], units: hidden[0], activation: 'relu' }))
-			for (let i = 1; i < hidden.length; i++) model.add(tf.layers.dense({ units: hidden[i], activation: 'relu' }))
+			model.add(tf.layers.dense({ inputShape: [inputDim], units: hiddenUnits, activation: hiddenActivation }))
+			for (let i = 1; i < hiddenLayers; i++) {
+				model.add(tf.layers.dense({ units: hiddenUnits, activation: hiddenActivation }))
+			}
 			model.add(tf.layers.dense({ units: outputDim }))
+			// Optional output normalization as chosen in the UI (stored under mlp.outputActivation)
+			const outAct = (mlp.outputActivation) || 'none'
+			if (outAct === 'softmax') {
+				model.add(tf.layers.activation({ activation: 'softmax' }))
+			} else if (outAct === 'sigmoid') {
+				model.add(tf.layers.activation({ activation: 'sigmoid' }))
+			}
 		} else {
 			// fallback to simple linear mapping
 			model.add(tf.layers.dense({ inputShape: [inputDim], units: outputDim }))
@@ -261,7 +275,7 @@ export function buildDiagramExecutor(diagram, sections, wireDims, models) {
 	}
 
 	// Executor function uses per-equation learner gating
-	return function execute(batchX, batchY, learnersAllowedSet) {
+	const execute = function (batchX, batchY, learnersAllowedSet) {
 		// For each node, compute its outputs as array per output handle index
 		const produced = new Map() // nodeId -> Tensor[]
 		// Collect values that flow into output nodes per their input index
@@ -343,6 +357,7 @@ export function buildDiagramExecutor(diagram, sections, wireDims, models) {
 	// Expose the precomputed data-source map for loss selection logic
 	execute.__outputsIsDataSource = outputsIsDataSource
 	execute.__outputsUpstreamBoxType = outputsUpstreamBoxType
+	return execute
 }
 
 // Compute one equation’s weighted loss and return { total, perIndex } where

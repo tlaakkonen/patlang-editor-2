@@ -212,10 +212,17 @@ class CodeGenerator {
                     this.addLine(`torch.nn.Linear(${inputDim}, ${mlp.hiddenUnits}),`)
                     this.addLine(`${activationFunc}(),`)
                     for (let i = 0; i < mlp.hiddenLayers; i++) {
-                        this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${outputDim}),`)
+                        this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${mlp.hiddenUnits}),`)
                         this.addLine(`${activationFunc}(),`)
                     }
-                    this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${outputDim})`)
+                    const outNorm = mlp.outputActivation || 'none'
+                    if (outNorm === 'softmax' || outNorm === 'sigmoid') {
+                        this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${outputDim}),`)
+                        if (outNorm === 'softmax') this.addLine(`torch.nn.Softmax(dim=-1)`) 
+                        else this.addLine(`torch.nn.Sigmoid()`)
+                    } else {
+                        this.addLine(`torch.nn.Linear(${mlp.hiddenUnits}, ${outputDim})`)
+                    }
                     this.endBlock()
                     this.addLine(`)`)   
                 } else if (this.wizardState.learnerConfigs[box.type].arch === 'Transformer') {
